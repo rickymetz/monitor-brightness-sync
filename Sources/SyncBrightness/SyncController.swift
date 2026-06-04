@@ -31,9 +31,12 @@ final class SyncController {
   private var calibrationTargetID: String?
   private var manualExternal = 0.0
   private var lastManualApplied = -1.0
-  // Manual brightness requests (sliders, clamshell keys) buffered per display and
+  // Manual brightness requests (per-monitor sliders) buffered per display and
   // flushed once per tick so fast drags don't flood the DDC bus.
   private var pendingManual: [String: Double] = [:]
+  // Clamshell / external-only brightness level, also coalesced per tick.
+  private var pendingExternalOnly: Double?
+  private let clamshellFloor = 0.15
 
   // MARK: - Configuration
 
@@ -95,13 +98,11 @@ final class SyncController {
     queue.async { self.pendingManual[id] = max(0.0, min(1.0, fraction)) }
   }
 
-  func setManualAll(fraction: Double) {
-    queue.async {
-      let f = max(0.0, min(1.0, fraction))
-      for display in self.externals where !self.disabledIDs.contains(display.id) {
-        self.pendingManual[display.id] = f
-      }
-    }
+  /// Drive the external(s) directly in clamshell/external-only mode. There's no
+  /// built-in to mirror, so the level is the brightness: it maps to DDC, with
+  /// sub-floor gamma dimming below the floor when "extra dimming" is on.
+  func applyExternalOnly(level: Double) {
+    queue.async { self.pendingExternalOnly = max(0.0, min(1.0, level)) }
   }
 
   private func flushPendingManual() {
@@ -112,6 +113,21 @@ final class SyncController {
       guard let display = externals.first(where: { $0.id == id }) else { continue }
       gamma.set(display.cgDisplayID, factor: 1)
       display.setBrightness(fraction: fraction)
+    }
+    reportMonitors()
+  }
+
+  private func flushPendingExternalOnly() {
+    guard let level = pendingExternalOnly else { return }
+    pendingExternalOnly = nil
+    for display in externals where !disabledIDs.contains(display.id) {
+      if subFloorDimming, level < clamshellFloor {
+        display.setBrightness(fraction: 0)
+        gamma.set(display.cgDisplayID, factor: max(minGammaFactor, level / clamshellFloor))
+      } else {
+        gamma.set(display.cgDisplayID, factor: 1)
+        display.setBrightness(fraction: level)
+      }
     }
     reportMonitors()
   }
@@ -152,6 +168,7 @@ final class SyncController {
 
   private func tick() {
     flushPendingManual()
+    flushPendingExternalOnly()
     guard let builtinID, !externals.isEmpty else { return }
 
     if calibrating {

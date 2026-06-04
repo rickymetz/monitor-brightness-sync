@@ -184,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let base = self.externalOnlyLevel ?? (self.monitors.first?.brightness ?? 0.5)
         let level = max(0, min(1, base + (increase ? step : -step)))
         self.externalOnlyLevel = level
-        self.sync.setManualAll(fraction: level)
+        self.sync.applyExternalOnly(level: level)
         self.hud.show(level: level)
       }
       return true // swallow the key in clamshell mode
