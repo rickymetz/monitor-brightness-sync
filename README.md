@@ -16,6 +16,20 @@ A macOS menu-bar agent that mirrors the **built-in display's brightness onto ext
 open "build/Monitor Brightness Sync.app"
 ```
 
+### Code signing & permissions
+
+macOS keys Accessibility / Input Monitoring grants to the app's **code-signing
+identity**. An ad-hoc signature has none, so the grant is dropped on every build
+and "Use brightness keys with lid closed" never sticks. Create a stable
+self-signed identity once:
+
+```sh
+./tools/make-signing-cert.sh    # one-time; build.sh then signs with it automatically
+```
+
+If the permission still won't take after enabling it, clear any stale grant and
+relaunch: `tccutil reset Accessibility com.rick.syncbrightness`.
+
 Faster inner loop while developing:
 
 ```sh
@@ -64,6 +78,7 @@ Sources/
     Diagnostics.swift         Env-var hardware probe
 Tests/CurveChecks/            Framework-free unit checks (run via ./run-tests.sh)
 tools/make-icon.swift         Generates Resources/AppIcon.icns
+tools/make-signing-cert.sh    Creates a stable self-signed signing identity (one-time)
 build.sh                      Compile + bundle + ad-hoc sign
 run-tests.sh                  Compile + run the unit checks (CLT only, no Xcode)
 ```
@@ -83,7 +98,7 @@ run-tests.sh                  Compile + run the unit checks (CLT only, no Xcode)
 
 - **Private APIs:** `IOAVService*` (IOKit), `DisplayServicesGetBrightness` (DisplayServices, dlsym'd), and CoreGraphics gamma. Same approach as MonitorControl/Lunar; stable in practice, but not App Store eligible.
 - **Apple Silicon only.** The Intel DDC path (`IOFramebufferI2C…`) is not implemented.
-- **Accessibility permission** is required for "Use brightness keys with lid closed" (the event tap).
+- **Accessibility permission** is required for "Use brightness keys with lid closed" (the event tap), and it only *persists* with a stable signing identity (see [Code signing & permissions](#code-signing--permissions)).
 - **Be gentle with DDC.** Some monitors (e.g. those that fail DDC *reads*) have flaky controllers; flooding them with writes can wedge the link. Writes are deliberately single-cycle, low-retry, and coalesced — keep it that way.
 - **Gamma safety.** Dimming is clamped so it can never reach full black, gamma is restored on quit, and `CGDisplayRestoreColorSyncSettings()` runs on launch to self-heal a force-killed run.
 

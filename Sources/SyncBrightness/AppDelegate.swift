@@ -21,6 +21,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   private var monitors: [MonitorState] = []
   private var externalOnlyLevel: Double?
+  private var axPollTimer: Timer?
+  private var axPollElapsed = 0
 
   // Last status values reported by the sync controller.
   private var lastFraction = -1.0
@@ -346,6 +348,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   @objc private func toggleLoginItem() { setLoginItem(!LoginItem.isEnabled) }
   @objc private func enableKeyControl() { setKeyControl(!mediaKeyTap.isRunning) }
 
+  private func startAccessibilityPolling() {
+    axPollTimer?.invalidate()
+    axPollElapsed = 0
+    // Once the user flips the Accessibility switch, start the tap automatically
+    // instead of making them click the menu item again.
+    axPollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+      guard let self else { timer.invalidate(); return }
+      self.axPollElapsed += 1
+      if self.mediaKeyTap.start() {
+        timer.invalidate(); self.axPollTimer = nil
+        self.pushToggleStates()
+      } else if self.axPollElapsed >= 120 {
+        timer.invalidate(); self.axPollTimer = nil // give up; relaunch will pick it up
+      }
+    }
+  }
+
+  private func stopAccessibilityPolling() {
+    axPollTimer?.invalidate()
+    axPollTimer = nil
+  }
+
   private func setSyncEnabled(_ enabled: Bool) {
     isEnabled = enabled
     sync.setEnabled(enabled)
@@ -366,8 +390,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   private func setKeyControl(_ on: Bool) {
     if on {
-      if MediaKeyTap.accessibilityGranted(prompt: true) { mediaKeyTap.start() }
+      if mediaKeyTap.start() {
+        // Already trusted — tap is live.
+      } else {
+        // Not trusted yet: open the Accessibility prompt once, then watch for the
+        // grant so we can start without the user clicking again.
+        _ = MediaKeyTap.accessibilityGranted(prompt: true)
+        startAccessibilityPolling()
+      }
     } else {
+      stopAccessibilityPolling()
       mediaKeyTap.stop()
     }
     pushToggleStates()

@@ -64,8 +64,18 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "› Code signing (ad-hoc)…"
-codesign --force --sign - "${APP_DIR}" >/dev/null
+# Sign with a stable identity if available, so macOS Accessibility/Input
+# Monitoring grants persist (ad-hoc signatures don't hold TCC permissions).
+# Create one with: ./tools/make-signing-cert.sh
+SIGN_IDENTITY="${SIGN_IDENTITY:-Monitor Brightness Sync Dev}"
+if security find-identity -p codesigning 2>/dev/null | grep -q "$SIGN_IDENTITY"; then
+  echo "› Code signing with: ${SIGN_IDENTITY}"
+  codesign --force --sign "$SIGN_IDENTITY" "${APP_DIR}" >/dev/null
+else
+  echo "› Code signing (ad-hoc) — Accessibility permission will NOT persist."
+  echo "  Run ./tools/make-signing-cert.sh once for a stable local identity."
+  codesign --force --sign - "${APP_DIR}" >/dev/null
+fi
 
 echo "✓ Built ${APP_DIR}"
 echo "  Run it with:  open \"${APP_DIR}\""
