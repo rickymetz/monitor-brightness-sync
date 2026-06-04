@@ -120,14 +120,9 @@ final class SyncController {
   private func flushPendingExternalOnly() {
     guard let level = pendingExternalOnly else { return }
     pendingExternalOnly = nil
+    // Clamshell: the level is the brightness directly (no built-in to mirror).
     for display in externals where !disabledIDs.contains(display.id) {
-      if subFloorDimming, level < clamshellFloor {
-        display.setBrightness(fraction: 0)
-        gamma.set(display.cgDisplayID, factor: max(minGammaFactor, level / clamshellFloor))
-      } else {
-        gamma.set(display.cgDisplayID, factor: 1)
-        display.setBrightness(fraction: level)
-      }
+      setLevel(display, ddcFraction: level, dimInput: level, floor: clamshellFloor)
     }
     reportMonitors()
   }
@@ -204,16 +199,23 @@ final class SyncController {
   // disconnected monitor. Keep a small visible floor.
   private let minGammaFactor = 0.15
 
-  private func applyToDisplay(_ display: ExternalDisplay, builtin: Double, ramp: Bool) {
-    let zero = display.curve.zeroBuiltin
-    if subFloorDimming, zero > 0, builtin < zero {
-      // Below the DDC floor: hold DDC at minimum and dim further via gamma.
+  /// Drive a display to `ddcFraction`, except when sub-floor dimming is on and
+  /// `dimInput` is below `floor` — then hold DDC at minimum and dim further via
+  /// gamma (clamped so it never blacks out). Shared by sync and clamshell modes.
+  private func setLevel(_ display: ExternalDisplay, ddcFraction: Double, dimInput: Double, floor: Double, ramp: Bool = false) {
+    if subFloorDimming, floor > 0, dimInput < floor {
       display.setBrightness(fraction: 0, ramp: ramp)
-      gamma.set(display.cgDisplayID, factor: max(minGammaFactor, builtin / zero))
+      gamma.set(display.cgDisplayID, factor: max(minGammaFactor, dimInput / floor))
     } else {
       gamma.set(display.cgDisplayID, factor: 1)
-      display.setBrightness(fraction: display.curve.external(for: builtin), ramp: ramp)
+      display.setBrightness(fraction: ddcFraction, ramp: ramp)
     }
+  }
+
+  // Normal sync: input is the built-in level mapped through the monitor's curve.
+  private func applyToDisplay(_ display: ExternalDisplay, builtin: Double, ramp: Bool) {
+    setLevel(display, ddcFraction: display.curve.external(for: builtin),
+             dimInput: builtin, floor: display.curve.zeroBuiltin, ramp: ramp)
   }
 
   private func rescanDisplays() {

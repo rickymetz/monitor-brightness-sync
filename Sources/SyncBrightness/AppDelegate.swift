@@ -43,6 +43,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     set { UserDefaults.standard.set(newValue, forKey: dimmingKey) }
   }
 
+  private let keyControlKey = "keyControlEnabled"
+  private var keyControlEnabled: Bool { // opt-in; defaults to off (needs Accessibility)
+    get { UserDefaults.standard.bool(forKey: keyControlKey) }
+    set { UserDefaults.standard.set(newValue, forKey: keyControlKey) }
+  }
+
   private let profilesKey = "profiles"
   private var profiles: [String: BrightnessCurve] = [:]
 
@@ -189,7 +195,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       }
       return true // swallow the key in clamshell mode
     }
-    if MediaKeyTap.accessibilityGranted(prompt: false) {
+    // Only resume the tap on launch if the user previously enabled it.
+    if keyControlEnabled, MediaKeyTap.accessibilityGranted(prompt: false) {
       mediaKeyTap.start()
     }
   }
@@ -389,6 +396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   private func setKeyControl(_ on: Bool) {
+    keyControlEnabled = on
     if on {
       if mediaKeyTap.start() {
         // Already trusted — tap is live.
