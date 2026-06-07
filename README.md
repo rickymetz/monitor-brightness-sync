@@ -27,6 +27,9 @@ self-signed identity once:
 ./tools/make-signing-cert.sh    # one-time; build.sh then signs with it automatically
 ```
 
+On the first build after creating the cert, macOS may prompt **"codesign wants to
+use the key …"** — click **Always Allow** (once) so future builds don't block.
+
 If the permission still won't take after enabling it, clear any stale grant and
 relaunch: `tccutil reset Accessibility com.rick.syncbrightness`.
 

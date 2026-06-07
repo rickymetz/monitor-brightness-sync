@@ -34,5 +34,11 @@ openssl pkcs12 -export -out "$WORK/id.p12" -inkey "$WORK/key.pem" -in "$WORK/cer
 echo "› Importing into the login keychain…"
 security import "$WORK/id.p12" -k "$HOME/Library/Keychains/login.keychain-db" -P "$PW" -T /usr/bin/codesign
 
+# Pre-authorize codesign (and Apple tools) to use the key so builds don't block
+# on a keychain prompt. Best-effort: may ask for your login password once.
+security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+  "$HOME/Library/Keychains/login.keychain-db" >/dev/null 2>&1 || true
+
 echo "✓ Created signing identity: $NAME"
-echo "  Now run ./build.sh — it will sign with this identity automatically."
+echo "  Now run ./build.sh — it signs with this identity automatically."
+echo "  On the first build, macOS may ask to let codesign use the key — click \"Always Allow\"."
