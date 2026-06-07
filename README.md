@@ -103,7 +103,7 @@ run-tests.sh                  Compile + run the unit checks (CLT only, no Xcode)
 - **Apple Silicon only.** The Intel DDC path (`IOFramebufferI2C…`) is not implemented.
 - **Accessibility permission** is required for "Use brightness keys with lid closed" (the event tap), and it only *persists* with a stable signing identity (see [Code signing & permissions](#code-signing--permissions)).
 - **Be gentle with DDC.** Some monitors (e.g. those that fail DDC *reads*) have flaky controllers; flooding them with writes can wedge the link. Writes are deliberately single-cycle, low-retry, and coalesced — keep it that way.
-- **Gamma safety.** Dimming is clamped so it can never reach full black, gamma is restored on quit, and `CGDisplayRestoreColorSyncSettings()` runs on launch to self-heal a force-killed run.
+- **Gamma safety.** Dimming is clamped to a small visible floor by default (the "Dim all the way to black" option removes the clamp for true blackout); gamma is restored on quit, and `CGDisplayRestoreColorSyncSettings()` runs on launch to self-heal a force-killed run.
 
 ## Reference
 

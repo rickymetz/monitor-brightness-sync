@@ -5,6 +5,7 @@ import Cocoa
 final class ControlWindowController: NSObject, NSWindowDelegate {
   var onSetSync: (Bool) -> Void = { _ in }
   var onSetDimming: (Bool) -> Void = { _ in }
+  var onSetBlackout: (Bool) -> Void = { _ in }
   var onSetLoginItem: (Bool) -> Void = { _ in }
   var onSetKeyControl: (Bool) -> Void = { _ in }
   var onCalibrate: () -> Void = {}
@@ -17,6 +18,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
   private let statusLabel = NSTextField(labelWithString: "Starting…")
   private let syncCheckbox = NSButton(checkboxWithTitle: "Sync external brightness", target: nil, action: nil)
   private let dimmingCheckbox = NSButton(checkboxWithTitle: "Allow extra-dark dimming", target: nil, action: nil)
+  private let blackoutCheckbox = NSButton(checkboxWithTitle: "Dim all the way to black", target: nil, action: nil)
   private let loginCheckbox = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
   private let keyControlCheckbox = NSButton(checkboxWithTitle: "Use brightness keys with lid closed", target: nil, action: nil)
   private var monitors: [MonitorState] = []
@@ -37,6 +39,9 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     dimmingCheckbox.target = self
     dimmingCheckbox.action = #selector(toggleDimming)
     dimmingCheckbox.toolTip = "Software-dims the external below its hardware minimum so it can match the Mac's darkness at low brightness."
+    blackoutCheckbox.target = self
+    blackoutCheckbox.action = #selector(toggleBlackout)
+    blackoutCheckbox.toolTip = "At the lowest brightness, let the external go completely black, like the Mac display. Turns on extra-dark dimming."
     loginCheckbox.target = self
     loginCheckbox.action = #selector(toggleLogin)
     keyControlCheckbox.target = self
@@ -57,8 +62,9 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
   }
 
   /// Reflect the global toggle states (driven by the menu or settings).
-  func updateToggles(dimming: Bool, login: Bool, keyControl: Bool) {
+  func updateToggles(dimming: Bool, blackout: Bool, login: Bool, keyControl: Bool) {
     dimmingCheckbox.state = dimming ? .on : .off
+    blackoutCheckbox.state = blackout ? .on : .off
     loginCheckbox.state = login ? .on : .off
     keyControlCheckbox.state = keyControl ? .on : .off
   }
@@ -88,8 +94,8 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     let rowH: CGFloat = 30
     let gap: CGFloat = 10
     let listH: CGFloat = monitors.isEmpty ? 18 : CGFloat(monitors.count) * rowH
-    // title + status + 4 toggle checkboxes + monitors header + rows + buttons
-    let total = pad + 22 + 6 + 18 + gap + 24 + 6 + 24 + 6 + 24 + 6 + 24 + gap + 16 + 6 + listH + gap + 30 + 8 + 30 + pad
+    // title + status + 5 toggle checkboxes + monitors header + rows + buttons
+    let total = pad + 22 + 6 + 18 + gap + 24 + 6 + 24 + 6 + 24 + 6 + 24 + 6 + 24 + gap + 16 + 6 + listH + gap + 30 + 8 + 30 + pad
 
     let content = NSView(frame: NSRect(x: 0, y: 0, width: width, height: total))
     var y = total - pad
@@ -119,6 +125,9 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     y -= 6 + 24
     dimmingCheckbox.frame = NSRect(x: 20, y: y, width: width - 40, height: 24)
     content.addSubview(dimmingCheckbox)
+    y -= 6 + 24
+    blackoutCheckbox.frame = NSRect(x: 20, y: y, width: width - 40, height: 24)
+    content.addSubview(blackoutCheckbox)
     y -= 6 + 24
     keyControlCheckbox.frame = NSRect(x: 20, y: y, width: width - 40, height: 24)
     content.addSubview(keyControlCheckbox)
@@ -192,6 +201,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
 
   @objc private func toggleSync() { onSetSync(syncCheckbox.state == .on) }
   @objc private func toggleDimming() { onSetDimming(dimmingCheckbox.state == .on) }
+  @objc private func toggleBlackout() { onSetBlackout(blackoutCheckbox.state == .on) }
   @objc private func toggleLogin() { onSetLoginItem(loginCheckbox.state == .on) }
   @objc private func toggleKeyControl() { onSetKeyControl(keyControlCheckbox.state == .on) }
   @objc private func calibrate() { onCalibrate() }

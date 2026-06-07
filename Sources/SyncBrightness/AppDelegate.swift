@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let statusMenuItem = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
   private let toggleItem = NSMenuItem(title: "Sync external brightness", action: #selector(toggleSync), keyEquivalent: "")
   private let dimmingItem = NSMenuItem(title: "Allow extra-dark dimming", action: #selector(toggleDimming), keyEquivalent: "")
+  private let blackoutItem = NSMenuItem(title: "Dim all the way to black", action: #selector(toggleBlackout), keyEquivalent: "")
   private let loginItem = NSMenuItem(title: "Launch at login", action: #selector(toggleLoginItem), keyEquivalent: "")
   private let keyControlItem = NSMenuItem(title: "Use brightness keys with lid closed", action: #selector(enableKeyControl), keyEquivalent: "")
   private let monitorsMenu = NSMenu()
@@ -49,6 +50,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     set { UserDefaults.standard.set(newValue, forKey: keyControlKey) }
   }
 
+  private let blackoutKey = "allowBlackout"
+  private var allowBlackout: Bool { // opt-in; defaults to off
+    get { UserDefaults.standard.bool(forKey: blackoutKey) }
+    set { UserDefaults.standard.set(newValue, forKey: blackoutKey) }
+  }
+
   private let profilesKey = "profiles"
   private var profiles: [String: BrightnessCurve] = [:]
 
@@ -87,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     sync.setEnabled(isEnabled)
     sync.setSubFloorDimming(subFloorDimming)
+    sync.setAllowBlackout(allowBlackout)
     sync.setDisabled(disabledIDs)
     sync.setProfiles(profiles)
     sync.start()
@@ -137,6 +145,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     dimmingItem.target = self
     dimmingItem.toolTip = "Software-dims the external below its hardware minimum so it can match the Mac's darkness at low brightness."
     menu.addItem(dimmingItem)
+    blackoutItem.target = self
+    blackoutItem.toolTip = "At the lowest brightness, let the external go completely black, like the Mac display. Turns on extra-dark dimming."
+    menu.addItem(blackoutItem)
     keyControlItem.target = self
     keyControlItem.toolTip = "When the lid is closed, the brightness keys adjust the external monitor (needs Accessibility permission)."
     menu.addItem(keyControlItem)
@@ -212,6 +223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       let controller = ControlWindowController()
       controller.onSetSync = { [weak self] enabled in self?.setSyncEnabled(enabled) }
       controller.onSetDimming = { [weak self] on in self?.setDimming(on) }
+      controller.onSetBlackout = { [weak self] on in self?.setBlackout(on) }
       controller.onSetLoginItem = { [weak self] on in self?.setLoginItem(on) }
       controller.onSetKeyControl = { [weak self] on in self?.setKeyControl(on) }
       controller.onCalibrate = { [weak self] in self?.openCalibration() }
@@ -352,6 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   @objc private func toggleSync() { setSyncEnabled(!isEnabled) }
   @objc private func toggleDimming() { setDimming(!subFloorDimming) }
+  @objc private func toggleBlackout() { setBlackout(!allowBlackout) }
   @objc private func toggleLoginItem() { setLoginItem(!LoginItem.isEnabled) }
   @objc private func enableKeyControl() { setKeyControl(!mediaKeyTap.isRunning) }
 
@@ -390,6 +403,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     pushToggleStates()
   }
 
+  private func setBlackout(_ on: Bool) {
+    allowBlackout = on
+    sync.setAllowBlackout(on)
+    if on, !subFloorDimming { setDimming(true) } // blackout needs the dimming machinery
+    pushToggleStates()
+  }
+
   private func setLoginItem(_ on: Bool) {
     LoginItem.setEnabled(on)
     pushToggleStates()
@@ -417,9 +437,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private func pushToggleStates() {
     toggleItem.state = isEnabled ? .on : .off
     dimmingItem.state = subFloorDimming ? .on : .off
+    blackoutItem.state = allowBlackout ? .on : .off
     loginItem.state = LoginItem.isEnabled ? .on : .off
     updateKeyControlItem()
     controlWindowController?.updateToggles(dimming: subFloorDimming,
+                                           blackout: allowBlackout,
                                            login: LoginItem.isEnabled,
                                            keyControl: mediaKeyTap.isRunning)
   }

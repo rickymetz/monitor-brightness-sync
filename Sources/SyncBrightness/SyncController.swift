@@ -24,6 +24,7 @@ final class SyncController {
   private var profiles: [String: BrightnessCurve] = [:]
   private var disabledIDs: Set<String> = []
   private var subFloorDimming = true
+  private var allowBlackout = false
 
   // Calibration: while active, auto-sync is suspended and the target display is
   // driven to `manualExternal` (applied via the timer so drags are coalesced).
@@ -66,6 +67,13 @@ final class SyncController {
       if !on {
         for display in self.externals { self.gamma.set(display.cgDisplayID, factor: 1) }
       }
+      self.lastAppliedFraction = -1
+    }
+  }
+
+  func setAllowBlackout(_ on: Bool) {
+    queue.async {
+      self.allowBlackout = on
       self.lastAppliedFraction = -1
     }
   }
@@ -204,8 +212,11 @@ final class SyncController {
   /// gamma (clamped so it never blacks out). Shared by sync and clamshell modes.
   private func setLevel(_ display: ExternalDisplay, ddcFraction: Double, dimInput: Double, floor: Double, ramp: Bool = false) {
     if subFloorDimming, floor > 0, dimInput < floor {
+      // Below the floor, hold DDC at minimum and dim via gamma. Normally clamped
+      // to a small visible floor; full blackout removes the clamp so it reaches 0.
+      let minGamma = allowBlackout ? 0.0 : minGammaFactor
       display.setBrightness(fraction: 0, ramp: ramp)
-      gamma.set(display.cgDisplayID, factor: max(minGammaFactor, dimInput / floor))
+      gamma.set(display.cgDisplayID, factor: max(minGamma, dimInput / floor))
     } else {
       gamma.set(display.cgDisplayID, factor: 1)
       display.setBrightness(fraction: ddcFraction, ramp: ramp)
