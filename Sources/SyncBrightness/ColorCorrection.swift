@@ -18,9 +18,8 @@ struct ColorCorrection: Codable, Equatable {
   static let identity = ColorCorrection(redGain: 1, greenGain: 1, blueGain: 1, gamma: 1)
 }
 
-/// Median patch colors sampled from one photo of the patch card on one display.
-/// Transient (derived during calibration); never persisted, so it isn't Codable.
-struct PatchSamples: Equatable {
+/// Median patch colors sampled from one photo. Codable for transport over the wire.
+struct PatchSamples: Equatable, Codable {
   var white: RGB
   var gray50: RGB
   var gray25: RGB
