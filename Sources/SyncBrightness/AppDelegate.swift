@@ -93,6 +93,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       self.controlWindowController?.updateMonitors(monitors)
       self.renderStatus()
     }
+    sync.onExternalChangedExternally = { [weak self] _ in
+      // The monitor's brightness moved outside the app (its own buttons): drop
+      // the cached clamshell base so the next key press steps from the new value.
+      self?.externalOnlyLevel = nil
+    }
 
     sync.setEnabled(isEnabled)
     sync.setSubFloorDimming(subFloorDimming)

@@ -10,6 +10,9 @@ final class SyncController {
   var onUpdate: ((Double, Int) -> Void)?
   /// Full per-monitor state, for the control window.
   var onMonitors: (([MonitorState]) -> Void)?
+  /// Fired (with a display id) when a reconcile read finds the monitor's
+  /// brightness was changed outside the app — e.g. via its own buttons.
+  var onExternalChangedExternally: ((String) -> Void)?
 
   private let queue = DispatchQueue(label: "com.rick.syncbrightness.sync")
   private let pollInterval: TimeInterval = 0.15
@@ -38,6 +41,10 @@ final class SyncController {
   // Clamshell / external-only brightness level, also coalesced per tick.
   private var pendingExternalOnly: Double?
   private let clamshellFloor = 0.15
+  // Reconcile: when we're not driving a display, periodically re-read its DDC
+  // brightness so our state matches changes made on the monitor's own buttons.
+  private var reconcileCounter = 0
+  private let reconcileEveryTicks = 33 // ~5s at the 0.15s poll interval
 
   // MARK: - Configuration
 
@@ -136,6 +143,30 @@ final class SyncController {
     reportMonitors()
   }
 
+  /// When we're not actively driving the externals (sync paused, or clamshell
+  /// between key presses), occasionally re-read their DDC brightness so our
+  /// state reflects changes made on the monitor's own buttons. Skipped while we
+  /// own the value (active sync) to avoid loading the bus and fighting writes.
+  private func reconcileExternalLevels() {
+    reconcileCounter += 1
+    guard reconcileCounter >= reconcileEveryTicks else { return }
+    reconcileCounter = 0
+    guard !calibrating, !externals.isEmpty else { return }
+    let activelyDriving = isEnabled && builtinID != nil
+    guard !activelyDriving else { return }
+
+    var changed = false
+    for display in externals where !disabledIDs.contains(display.id) && !display.followsViaGamma && display.readResponsive {
+      guard let result = DDC.read(service: display.service, command: kVCPBrightness), result.max > 0 else { continue }
+      let observed = max(0.0, min(1.0, Double(result.current) / Double(result.max)))
+      if let known = display.lastSetFraction, abs(observed - known) < 0.02 { continue }
+      display.syncObservedLevel(observed)
+      changed = true
+      DispatchQueue.main.async { self.onExternalChangedExternally?(display.id) }
+    }
+    if changed { reportMonitors() }
+  }
+
   // MARK: - Lifecycle
 
   func start() {
@@ -181,6 +212,7 @@ final class SyncController {
   private func tick() {
     flushPendingManual()
     flushPendingExternalOnly()
+    reconcileExternalLevels()
     guard let builtinID, !externals.isEmpty else { return }
 
     if calibrating {

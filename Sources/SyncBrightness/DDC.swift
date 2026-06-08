@@ -64,6 +64,12 @@ final class ExternalDisplay {
     gammaFollowLevel = 1.0
   }
 
+  /// Record a level observed by reading the monitor (e.g. the user turned its
+  /// own knob) so our state matches reality without driving the panel.
+  func syncObservedLevel(_ fraction: Double) {
+    lastSetFraction = max(0.0, min(1.0, fraction))
+  }
+
   init(service: IOAVService, id: String, name: String, serialNumber: Int64) {
     self.service = service
     self.id = id
