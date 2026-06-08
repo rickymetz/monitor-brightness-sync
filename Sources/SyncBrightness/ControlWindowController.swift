@@ -358,15 +358,16 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
   }
 
   private func buildHotkeysCard(_ content: NSView, _ y: CGFloat) -> CGFloat {
-    let height = toggleRowH + 2 * rowH + 2 * cardPad
+    let subtitle = "Use your own keys to change brightness — handy on a keyboard without brightness keys."
+    let toggleH = toggleRowHeight(subtitle: subtitle, control: hotkeysSwitch)
+    let height = toggleH + 2 * rowH + 2 * cardPad
     let card = styledCard(at: y, height: height)
 
-    placeToggle(card, top: cardPad, title: "Custom brightness shortcuts",
-                subtitle: "Use your own keys to change brightness — handy on a keyboard without brightness keys.",
-                control: hotkeysSwitch,
+    placeToggle(card, top: cardPad, rowHeight: toggleH, title: "Custom brightness shortcuts",
+                subtitle: subtitle, control: hotkeysSwitch,
                 tooltip: "Register global shortcuts that change brightness like the brightness keys do.")
-    placeRecorder(card, top: cardPad + toggleRowH, title: "Brightness up", recorder: upRecorder)
-    placeRecorder(card, top: cardPad + toggleRowH + rowH, title: "Brightness down", recorder: downRecorder)
+    placeRecorder(card, top: cardPad + toggleH, title: "Brightness up", recorder: upRecorder)
+    placeRecorder(card, top: cardPad + toggleH + rowH, title: "Brightness down", recorder: downRecorder)
 
     content.addSubview(card)
     return y + height + 18
@@ -428,21 +429,39 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
     return y + 16 + 6
   }
 
-  /// A card of toggle rows, each with a title, gray subtitle, and a switch.
+  /// A card of toggle rows, each with a title, gray subtitle, and a switch. Rows
+  /// grow to fit a wrapped subtitle so long descriptions don't get clipped.
   private func toggleCard(_ content: NSView, _ y: CGFloat,
                           _ rows: [(title: String, subtitle: String, control: NSSwitch, tooltip: String)]) -> CGFloat {
-    let height = CGFloat(rows.count) * toggleRowH + 2 * cardPad
+    let heights = rows.map { toggleRowHeight(subtitle: $0.subtitle, control: $0.control) }
+    let height = heights.reduce(0, +) + 2 * cardPad
     let card = styledCard(at: y, height: height)
+    var top = cardPad
     for (i, row) in rows.enumerated() {
-      let top = cardPad + CGFloat(i) * toggleRowH
       if i > 0 { separatorAbsolute(card, top) }
-      placeToggle(card, top: top, title: row.title, subtitle: row.subtitle, control: row.control, tooltip: row.tooltip)
+      placeToggle(card, top: top, rowHeight: heights[i], title: row.title, subtitle: row.subtitle, control: row.control, tooltip: row.tooltip)
+      top += heights[i]
     }
     content.addSubview(card)
     return y + height + 18
   }
 
-  private func placeToggle(_ card: NSView, top: CGFloat, title: String, subtitle: String, control: NSSwitch, tooltip: String) {
+  /// Height a toggle row needs: the title block plus the wrapped subtitle.
+  private func toggleRowHeight(subtitle: String, control: NSSwitch) -> CGFloat {
+    let textW = cardW - 16 - control.fittingSize.width - 28
+    let subH = wrappedHeight(subtitle, font: .systemFont(ofSize: 11), width: textW)
+    return max(toggleRowH, 26 + subH + 9) // title (top 7 + 17 + 2 gap) + subtitle + bottom pad
+  }
+
+  private func wrappedHeight(_ text: String, font: NSFont, width: CGFloat) -> CGFloat {
+    let label = NSTextField(wrappingLabelWithString: text)
+    label.font = font
+    label.preferredMaxLayoutWidth = width
+    label.frame.size.width = width
+    return label.fittingSize.height
+  }
+
+  private func placeToggle(_ card: NSView, top: CGFloat, rowHeight: CGFloat, title: String, subtitle: String, control: NSSwitch, tooltip: String) {
     let size = control.fittingSize
     let textW = cardW - 16 - size.width - 28
     let titleLabel = NSTextField(labelWithString: title)
@@ -452,16 +471,18 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
     titleLabel.frame = NSRect(x: 16, y: top + 7, width: textW, height: 17)
     card.addSubview(titleLabel)
 
-    let sub = NSTextField(labelWithString: subtitle)
+    let sub = NSTextField(wrappingLabelWithString: subtitle)
     sub.font = .systemFont(ofSize: 11)
     sub.textColor = .secondaryLabelColor
-    sub.lineBreakMode = .byTruncatingTail
-    sub.frame = NSRect(x: 16, y: top + 26, width: textW, height: 15)
+    sub.preferredMaxLayoutWidth = textW
+    sub.frame.size.width = textW
+    let subH = sub.fittingSize.height
+    sub.frame = NSRect(x: 16, y: top + 26, width: textW, height: subH)
     card.addSubview(sub)
 
     control.toolTip = tooltip
     control.setAccessibilityLabel(title) // the title is a sibling label; bind it for VoiceOver
-    control.frame = NSRect(x: cardW - 16 - size.width, y: top + (toggleRowH - size.height) / 2, width: size.width, height: size.height)
+    control.frame = NSRect(x: cardW - 16 - size.width, y: top + (rowHeight - size.height) / 2, width: size.width, height: size.height)
     card.addSubview(control)
   }
 
