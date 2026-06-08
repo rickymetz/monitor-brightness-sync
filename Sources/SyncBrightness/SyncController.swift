@@ -10,6 +10,9 @@ final class SyncController {
   var onUpdate: ((Double, Int) -> Void)?
   /// Full per-monitor state, for the control window.
   var onMonitors: (([MonitorState]) -> Void)?
+  /// Fired (with a display id) when a reconcile read finds the monitor's
+  /// brightness was changed outside the app — e.g. via its own buttons.
+  var onExternalChangedExternally: ((String) -> Void)?
 
   private let queue = DispatchQueue(label: "com.rick.syncbrightness.sync")
   private let pollInterval: TimeInterval = 0.15
@@ -38,6 +41,10 @@ final class SyncController {
   // Clamshell / external-only brightness level, also coalesced per tick.
   private var pendingExternalOnly: Double?
   private let clamshellFloor = 0.15
+  // Reconcile: when we're not driving a display, periodically re-read its DDC
+  // brightness so our state matches changes made on the monitor's own buttons.
+  private var reconcileCounter = 0
+  private let reconcileEveryTicks = 66 // ~10s at the 0.15s poll interval — gentle on the DDC bus
 
   // MARK: - Configuration
 
@@ -55,6 +62,7 @@ final class SyncController {
       self.disabledIDs = ids
       for display in self.externals where newlyDisabled.contains(display.id) {
         self.gamma.set(display.cgDisplayID, factor: 1) // don't leave a disabled monitor dimmed
+        display.clearGammaFollow()
       }
       self.lastAppliedFraction = -1
       self.reportMonitors()
@@ -119,8 +127,8 @@ final class SyncController {
     pendingManual.removeAll()
     for (id, fraction) in pending {
       guard let display = externals.first(where: { $0.id == id }) else { continue }
-      gamma.set(display.cgDisplayID, factor: 1)
-      display.setBrightness(fraction: fraction)
+      // floor 0 → pure DDC, but still falls back to gamma if the write is refused.
+      setLevel(display, ddcFraction: fraction, dimInput: fraction, floor: 0)
     }
     reportMonitors()
   }
@@ -133,6 +141,30 @@ final class SyncController {
       setLevel(display, ddcFraction: level, dimInput: level, floor: clamshellFloor)
     }
     reportMonitors()
+  }
+
+  /// When we're not actively driving the externals (sync paused, or clamshell
+  /// between key presses), occasionally re-read their DDC brightness so our
+  /// state reflects changes made on the monitor's own buttons. Skipped while we
+  /// own the value (active sync) to avoid loading the bus and fighting writes.
+  private func reconcileExternalLevels() {
+    reconcileCounter += 1
+    guard reconcileCounter >= reconcileEveryTicks else { return }
+    reconcileCounter = 0
+    guard !calibrating, !externals.isEmpty else { return }
+    let activelyDriving = isEnabled && builtinID != nil
+    guard !activelyDriving else { return }
+
+    var changed = false
+    for display in externals where !disabledIDs.contains(display.id) && !display.followsViaGamma && display.readResponsive {
+      guard let result = DDC.read(service: display.service, command: kVCPBrightness), result.max > 0 else { continue }
+      let observed = max(0.0, min(1.0, Double(result.current) / Double(result.max)))
+      if let known = display.lastSetFraction, abs(observed - known) < 0.02 { continue }
+      display.syncObservedLevel(observed)
+      changed = true
+      DispatchQueue.main.async { self.onExternalChangedExternally?(display.id) }
+    }
+    if changed { reportMonitors() }
   }
 
   // MARK: - Lifecycle
@@ -180,6 +212,7 @@ final class SyncController {
   private func tick() {
     flushPendingManual()
     flushPendingExternalOnly()
+    reconcileExternalLevels()
     guard let builtinID, !externals.isEmpty else { return }
 
     if calibrating {
@@ -218,16 +251,34 @@ final class SyncController {
   /// Drive a display to `ddcFraction`, except when sub-floor dimming is on and
   /// `dimInput` is below `floor` — then hold DDC at minimum and dim further via
   /// gamma (clamped so it never blacks out). Shared by sync and clamshell modes.
+  /// If the DDC write is refused, fall back to following the built-in entirely
+  /// via software gamma so non-DDC displays still track brightness.
   private func setLevel(_ display: ExternalDisplay, ddcFraction: Double, dimInput: Double, floor: Double, ramp: Bool = false) {
-    if subFloorDimming, floor > 0, dimInput < floor {
+    let belowFloor = subFloorDimming && floor > 0 && dimInput < floor
+    let minGamma = allowBlackout ? 0.0 : minGammaFactor
+    let wroteOK = display.setBrightness(fraction: belowFloor ? 0 : ddcFraction, ramp: ramp)
+
+    if !wroteOK {
+      // DDC not accepted on this display — follow the built-in via gamma. This is
+      // the only way to dim a monitor that doesn't speak DDC, so trade backlight
+      // control for a software luminance scale. Only possible (and only reported
+      // as working) when we resolved a CoreGraphics display id to drive.
+      if display.cgDisplayID != nil {
+        let level = max(minGamma, dimInput)
+        gamma.set(display.cgDisplayID, factor: level)
+        display.markGammaFollow(level: level)
+      } else {
+        display.clearGammaFollow() // no DDC and no gamma path — genuinely unreachable
+      }
+      return
+    }
+    display.clearGammaFollow()
+    if belowFloor {
       // Below the floor, hold DDC at minimum and dim via gamma. Normally clamped
       // to a small visible floor; full blackout removes the clamp so it reaches 0.
-      let minGamma = allowBlackout ? 0.0 : minGammaFactor
-      display.setBrightness(fraction: 0, ramp: ramp)
       gamma.set(display.cgDisplayID, factor: max(minGamma, dimInput / floor))
     } else {
       gamma.set(display.cgDisplayID, factor: 1)
-      display.setBrightness(fraction: ddcFraction, ramp: ramp)
     }
   }
 
@@ -260,7 +311,7 @@ final class SyncController {
     let states = externals.map {
       MonitorState(id: $0.id, name: $0.name,
                    enabled: !disabledIDs.contains($0.id),
-                   healthy: $0.lastWriteOK,
+                   healthy: $0.lastWriteOK || $0.followsViaGamma, // gamma fallback still tracks
                    brightness: $0.currentFraction)
     }
     DispatchQueue.main.async { self.onMonitors?(states) }

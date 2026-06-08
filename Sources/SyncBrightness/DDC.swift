@@ -45,9 +45,30 @@ final class ExternalDisplay {
   private(set) var readResponsive = true
   /// Last fraction we set, used for smooth ramping.
   private(set) var lastSetFraction: Double?
+  /// When DDC writes are refused, we follow the built-in via software gamma
+  /// instead so the display still tracks brightness (non-DDC monitors, some
+  /// USB-C hubs, etc.). These record that fallback for the UI.
+  private(set) var followsViaGamma = false
+  private(set) var gammaFollowLevel = 1.0
 
   var info: DisplayInfo { DisplayInfo(id: id, name: name) }
-  var currentFraction: Double { lastSetFraction ?? 0 }
+  var currentFraction: Double { followsViaGamma ? gammaFollowLevel : (lastSetFraction ?? 0) }
+
+  func markGammaFollow(level: Double) {
+    followsViaGamma = true
+    gammaFollowLevel = max(0.0, min(1.0, level))
+  }
+
+  func clearGammaFollow() {
+    followsViaGamma = false
+    gammaFollowLevel = 1.0
+  }
+
+  /// Record a level observed by reading the monitor (e.g. the user turned its
+  /// own knob) so our state matches reality without driving the panel.
+  func syncObservedLevel(_ fraction: Double) {
+    lastSetFraction = max(0.0, min(1.0, fraction))
+  }
 
   init(service: IOAVService, id: String, name: String, serialNumber: Int64) {
     self.service = service

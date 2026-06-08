@@ -20,6 +20,7 @@ final class MessageHUD {
     if let vf = (screen ?? NSScreen.main)?.visibleFrame {
       window.setFrameOrigin(NSPoint(x: vf.midX - width / 2, y: vf.maxY - height - 12))
     }
+    OverlayMaterial.announce(message)
 
     generation += 1
     let token = generation

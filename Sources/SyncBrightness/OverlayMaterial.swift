@@ -4,6 +4,17 @@ import Cocoa
 /// Liquid Glass on macOS 26+, classic vibrancy otherwise. Shared by the
 /// brightness overlay and the hint overlay.
 enum OverlayMaterial {
+  /// Speak a transient status change to VoiceOver. The overlays are borderless,
+  /// click-through windows that assistive tech can't otherwise reach, so we
+  /// announce their content the way the system bezel does.
+  static func announce(_ message: String) {
+    guard NSWorkspace.shared.isVoiceOverEnabled else { return }
+    NSAccessibility.post(element: NSApp as Any,
+                         notification: .announcementRequested,
+                         userInfo: [.announcement: message,
+                                    .priority: NSAccessibilityPriorityLevel.high.rawValue])
+  }
+
   static func container(size: NSSize, cornerRadius: CGFloat, wrapping content: NSView) -> NSView {
     content.frame = NSRect(origin: .zero, size: size)
     content.autoresizingMask = [.width, .height]

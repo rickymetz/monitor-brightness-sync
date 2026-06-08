@@ -12,6 +12,7 @@ let package = Package(
       linkerSettings: [
         .linkedFramework("Cocoa"),
         .linkedFramework("IOKit"),
+        .linkedFramework("Carbon"), // RegisterEventHotKey for custom global hotkeys
       ]
     ),
   ]
