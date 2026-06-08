@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 var failures = 0
 
@@ -93,6 +94,41 @@ do {
   check(PatchCardLayout.role(col: 0, row: 1) == .white, "top-left is white")
   check(PatchCardLayout.role(col: 0, row: 0) == .red, "bottom-left is red")
   check(PatchCardLayout.allRoles.count == 6, "six patches")
+}
+
+// ---- PatchCardAnalyzer ----
+func renderCard(width: Int = 600, height: Int = 400) -> CGImage {
+  let cs = CGColorSpaceCreateDeviceRGB()
+  let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                      bytesPerRow: 0, space: cs,
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+  func fill(_ x: Double, _ y: Double, _ w: Double, _ h: Double, _ r: Double, _ g: Double, _ b: Double) {
+    ctx.setFillColor(red: r, green: g, blue: b, alpha: 1)
+    ctx.fill(CGRect(x: x, y: y, width: w, height: h))
+  }
+  let W = Double(width), H = Double(height)
+  fill(0, 0, W, H, 0, 0, 0)
+  let m = 30.0
+  fill(0, H - m, m, m, 0, 1, 1)                      // TL cyan
+  fill(W - m, H - m, m, m, 1, 0, 1)                  // TR magenta
+  fill(0, 0, m, m, 1, 1, 0)                          // BL yellow
+  fill(W - m, 0, m, m, 1, 1, 1)                      // BR white
+  for col in 0..<3 {
+    for row in 0..<2 {
+      let r = PatchCardLayout.cellRect(col: col, row: row)
+      let c = PatchCardLayout.fillColor(PatchCardLayout.role(col: col, row: row))
+      fill(r.minX * W, r.minY * H, r.width * W, r.height * H, c.r, c.g, c.b)
+    }
+  }
+  return ctx.makeImage()!
+}
+do {
+  if let s = PatchCardAnalyzer.sample(image: renderCard()) {
+    check(approx(s.white.r, 1.0, 0.06) && approx(s.white.g, 1.0, 0.06), "white sampled")
+    check(approx(s.gray50.r, 0.5, 0.07), "gray50 sampled")
+    check(s.red.r > 0.8 && s.red.g < 0.15, "red sampled")
+    check(s.blue.b > 0.8 && s.blue.r < 0.15, "blue sampled")
+  } else { check(false, "analyzer returned nil on a clean card") }
 }
 
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) FAILED.")
