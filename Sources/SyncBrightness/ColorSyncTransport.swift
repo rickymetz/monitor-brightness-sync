@@ -8,7 +8,9 @@ import Security
 /// PhoneToMac messages on the main queue.
 final class ColorSyncTransport: ColorSyncPeer {
   struct ConnectionInfo { let host: String; let port: UInt16; let psk: String }
+  enum TransportError: Error { case portUnavailable }
 
+  private let queue = DispatchQueue(label: "colorsync.transport")
   private var listener: NWListener?
   private var connection: NWConnection?
   private let psk: String
@@ -36,8 +38,9 @@ final class ColorSyncTransport: ColorSyncPeer {
     let listener = try NWListener(using: params)
     self.listener = listener
     listener.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
-    listener.start(queue: .main)
+    listener.start(queue: queue)
     for _ in 0..<100 { if let p = listener.port?.rawValue { port = p; break }; usleep(10_000) }
+    guard port != 0 else { throw TransportError.portUnavailable }
     let host = CalibrationHost.lanIPv4() ?? "127.0.0.1"
     return ConnectionInfo(host: host, port: port, psk: psk)
   }
@@ -48,10 +51,18 @@ final class ColorSyncTransport: ColorSyncPeer {
   }
 
   private func accept(_ conn: NWConnection) {
+    connection?.cancel()
     connection = conn
-    conn.start(queue: .main)
+    var didNotifyConnected = false
+    conn.stateUpdateHandler = { [weak self] state in
+      guard let self else { return }
+      if case .ready = state, !didNotifyConnected {
+        didNotifyConnected = true
+        DispatchQueue.main.async { self.onClientConnected?() }
+      }
+    }
+    conn.start(queue: queue)
     receiveFrame(conn)
-    DispatchQueue.main.async { [weak self] in self?.onClientConnected?() }
   }
 
   // MARK: ColorSyncPeer
