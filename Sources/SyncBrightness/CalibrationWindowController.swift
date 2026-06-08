@@ -1,5 +1,9 @@
 import Cocoa
 
+private final class CalFlippedView: NSView {
+  override var isFlipped: Bool { true }
+}
+
 /// Window for building per-monitor match curves. Pick a monitor, set the Mac
 /// brightness with the keyboard, drag the slider until the external looks the
 /// same, and add a point. Each monitor keeps its own curve (profile).
@@ -15,7 +19,7 @@ final class CalibrationWindowController: NSObject, NSWindowDelegate {
 
   private var window: NSWindow!
   private let monitorPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-  private let builtinLabel = NSTextField(labelWithString: "Built-in: --%")
+  private let builtinLabel = NSTextField(labelWithString: "--%")
   private let valueLabel = NSTextField(labelWithString: "--%")
   private let slider = NSSlider()
   private let listView = NSTextView()
@@ -60,27 +64,37 @@ final class CalibrationWindowController: NSObject, NSWindowDelegate {
 
   // MARK: - UI
 
-  private func buildWindow() {
-    let content = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 400))
+  private let winW: CGFloat = 400
+  private let margin: CGFloat = 20
+  private var cardW: CGFloat { winW - 2 * margin }
 
-    let title = NSTextField(labelWithString: "Calibrate external to match built-in")
-    title.font = .boldSystemFont(ofSize: 13)
-    title.frame = NSRect(x: 20, y: 366, width: 340, height: 22)
+  private func buildWindow() {
+    let content = CalFlippedView(frame: NSRect(x: 0, y: 0, width: winW, height: 10))
+    var y: CGFloat = 18
+
+    // Header + instructions
+    let title = NSTextField(labelWithString: "Calibrate displays")
+    title.font = .systemFont(ofSize: 15, weight: .semibold)
+    title.frame = NSRect(x: margin, y: y, width: cardW, height: 20)
     content.addSubview(title)
+    y += 26
 
     let instructions = NSTextField(wrappingLabelWithString:
-      "Pick a monitor, set your Mac brightness with the keyboard, drag the slider until that monitor looks the same, then click “Add point.” Repeat at a few levels. Each monitor is saved separately.")
+      "Pick a monitor, set your Mac brightness with the keyboard, then drag “External brightness” until that monitor looks the same and click Add point. Repeat at a few levels — each monitor is saved separately.")
     instructions.font = .systemFont(ofSize: 11)
     instructions.textColor = .secondaryLabelColor
-    instructions.frame = NSRect(x: 20, y: 298, width: 340, height: 62)
+    instructions.frame = NSRect(x: margin, y: y, width: cardW, height: 48)
     content.addSubview(instructions)
+    y += 48 + 14
 
-    let monitorTitle = NSTextField(labelWithString: "Monitor")
-    monitorTitle.font = .systemFont(ofSize: 12)
-    monitorTitle.frame = NSRect(x: 20, y: 270, width: 64, height: 20)
-    content.addSubview(monitorTitle)
+    // Match card: Monitor / Built-in / External brightness slider
+    let rowH: CGFloat = 38
+    let sliderRowH: CGFloat = 54
+    let cardPad: CGFloat = 5
+    let matchH = rowH * 2 + sliderRowH + 2 * cardPad
+    let matchCard = styledCard(at: y, height: matchH)
 
-    monitorPopup.frame = NSRect(x: 86, y: 267, width: 274, height: 25)
+    rowLabel(matchCard, "Monitor", top: cardPad, rowH: rowH)
     monitorPopup.target = self
     monitorPopup.action = #selector(monitorChanged)
     if displays.isEmpty {
@@ -89,75 +103,120 @@ final class CalibrationWindowController: NSObject, NSWindowDelegate {
     } else {
       for display in displays { monitorPopup.addItem(withTitle: display.name) }
     }
-    content.addSubview(monitorPopup)
+    monitorPopup.frame = NSRect(x: cardW - 16 - 220, y: cardPad + (rowH - 25) / 2, width: 220, height: 25)
+    matchCard.addSubview(monitorPopup)
+    sep(matchCard, at: cardPad + rowH)
 
+    rowLabel(matchCard, "Built-in brightness", top: cardPad + rowH, rowH: rowH)
     builtinLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-    builtinLabel.frame = NSRect(x: 20, y: 238, width: 340, height: 20)
-    content.addSubview(builtinLabel)
+    builtinLabel.textColor = .secondaryLabelColor
+    builtinLabel.alignment = .right
+    builtinLabel.frame = NSRect(x: cardW - 16 - 80, y: cardPad + rowH + (rowH - 17) / 2, width: 80, height: 17)
+    matchCard.addSubview(builtinLabel)
+    sep(matchCard, at: cardPad + rowH * 2)
 
-    let externalTitle = NSTextField(labelWithString: "External match")
-    externalTitle.font = .systemFont(ofSize: 12)
-    externalTitle.frame = NSRect(x: 20, y: 210, width: 200, height: 20)
-    content.addSubview(externalTitle)
-
+    let extTop = cardPad + rowH * 2
+    rowLabel(matchCard, "External brightness", top: extTop, rowH: 30)
     valueLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
     valueLabel.alignment = .right
-    valueLabel.frame = NSRect(x: 300, y: 210, width: 60, height: 20)
-    content.addSubview(valueLabel)
-
+    valueLabel.textColor = .secondaryLabelColor
+    valueLabel.frame = NSRect(x: cardW - 16 - 60, y: extTop + 7, width: 60, height: 17)
+    matchCard.addSubview(valueLabel)
     slider.minValue = 0
     slider.maxValue = 100
     slider.isContinuous = true
     slider.target = self
     slider.action = #selector(sliderChanged(_:))
     slider.isEnabled = !displays.isEmpty
-    slider.frame = NSRect(x: 20, y: 184, width: 340, height: 22)
-    content.addSubview(slider)
+    slider.frame = NSRect(x: 16, y: extTop + 30, width: cardW - 32, height: 20)
+    matchCard.addSubview(slider)
+    content.addSubview(matchCard)
+    y += matchH + 18
 
-    let addButton = NSButton(title: "Add point", target: self, action: #selector(addPoint))
-    addButton.bezelStyle = .rounded
-    addButton.isEnabled = !displays.isEmpty
-    addButton.frame = NSRect(x: 20, y: 146, width: 120, height: 30)
-    content.addSubview(addButton)
+    // Saved points
+    let header = NSTextField(labelWithString: "Saved points")
+    header.font = .systemFont(ofSize: 12, weight: .semibold)
+    header.textColor = .secondaryLabelColor
+    header.frame = NSRect(x: margin + 4, y: y, width: cardW - 8, height: 16)
+    content.addSubview(header)
+    y += 16 + 6
 
-    let scroll = NSScrollView(frame: NSRect(x: 20, y: 54, width: 340, height: 84))
+    let listH: CGFloat = 92
+    let listCard = styledCard(at: y, height: listH)
+    let scroll = NSScrollView(frame: NSRect(x: 8, y: 8, width: cardW - 16, height: listH - 16))
     scroll.hasVerticalScroller = true
-    scroll.borderType = .bezelBorder
-    listView.frame = NSRect(x: 0, y: 0, width: 340, height: 84)
+    scroll.drawsBackground = false
+    listView.frame = NSRect(x: 0, y: 0, width: cardW - 16, height: listH - 16)
     listView.isEditable = false
     listView.isSelectable = false
+    listView.drawsBackground = false
     listView.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-    listView.textContainerInset = NSSize(width: 6, height: 6)
+    listView.textContainerInset = NSSize(width: 4, height: 4)
     listView.minSize = NSSize(width: 0, height: 0)
     listView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
     listView.isVerticallyResizable = true
     listView.isHorizontallyResizable = false
     listView.autoresizingMask = [.width]
-    listView.textContainer?.containerSize = NSSize(width: 340, height: CGFloat.greatestFiniteMagnitude)
+    listView.textContainer?.containerSize = NSSize(width: cardW - 16, height: CGFloat.greatestFiniteMagnitude)
     listView.textContainer?.widthTracksTextView = true
     scroll.documentView = listView
-    content.addSubview(scroll)
+    listCard.addSubview(scroll)
+    content.addSubview(listCard)
+    y += listH + 18
 
+    // Footer
+    let addButton = NSButton(title: "Add point", target: self, action: #selector(addPoint))
+    addButton.bezelStyle = .rounded
+    addButton.isEnabled = !displays.isEmpty
+    addButton.keyEquivalent = "\r"
+    addButton.frame = NSRect(x: margin, y: y, width: 110, height: 30)
+    content.addSubview(addButton)
     let resetButton = NSButton(title: "Reset this monitor", target: self, action: #selector(resetMonitor))
     resetButton.bezelStyle = .rounded
     resetButton.isEnabled = !displays.isEmpty
-    resetButton.frame = NSRect(x: 20, y: 14, width: 160, height: 30)
+    resetButton.frame = NSRect(x: margin + 118, y: y, width: 150, height: 30)
     content.addSubview(resetButton)
-
     let doneButton = NSButton(title: "Done", target: self, action: #selector(done))
     doneButton.bezelStyle = .rounded
-    doneButton.keyEquivalent = "\r"
-    doneButton.frame = NSRect(x: 290, y: 14, width: 70, height: 30)
+    doneButton.frame = NSRect(x: winW - margin - 70, y: y, width: 70, height: 30)
     content.addSubview(doneButton)
+    y += 30 + 18
 
+    content.frame = NSRect(x: 0, y: 0, width: winW, height: y)
     window = NSWindow(contentRect: content.frame,
                       styleMask: [.titled, .closable],
                       backing: .buffered, defer: false)
     window.title = "Calibrate"
+    window.titleVisibility = .hidden
+    window.titlebarAppearsTransparent = true
     window.contentView = content
     window.isReleasedWhenClosed = false
     window.delegate = self
     window.level = .floating
+  }
+
+  private func styledCard(at y: CGFloat, height: CGFloat) -> CalFlippedView {
+    let card = CalFlippedView(frame: NSRect(x: margin, y: y, width: cardW, height: height))
+    card.wantsLayer = true
+    card.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+    card.layer?.cornerRadius = 10
+    card.layer?.borderWidth = 0.5
+    card.layer?.borderColor = NSColor.separatorColor.cgColor
+    return card
+  }
+
+  private func rowLabel(_ card: NSView, _ text: String, top: CGFloat, rowH: CGFloat) {
+    let label = NSTextField(labelWithString: text)
+    label.font = .systemFont(ofSize: 13)
+    label.frame = NSRect(x: 16, y: top + (rowH - 17) / 2, width: cardW - 120, height: 17)
+    card.addSubview(label)
+  }
+
+  private func sep(_ card: NSView, at top: CGFloat) {
+    let s = NSView(frame: NSRect(x: 16, y: top, width: cardW - 16, height: 1))
+    s.wantsLayer = true
+    s.layer?.backgroundColor = NSColor.separatorColor.cgColor
+    card.addSubview(s)
   }
 
   // MARK: - Actions
@@ -220,9 +279,9 @@ final class CalibrationWindowController: NSObject, NSWindowDelegate {
 
   private func refreshBuiltinLabel() {
     if let f = builtinFraction() {
-      builtinLabel.stringValue = String(format: "Built-in: %d%%", Int((f * 100).rounded()))
+      builtinLabel.stringValue = String(format: "%d%%", Int((f * 100).rounded()))
     } else {
-      builtinLabel.stringValue = "Built-in: unavailable"
+      builtinLabel.stringValue = "—"
     }
   }
 
