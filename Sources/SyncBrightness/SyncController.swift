@@ -44,7 +44,7 @@ final class SyncController {
   // Reconcile: when we're not driving a display, periodically re-read its DDC
   // brightness so our state matches changes made on the monitor's own buttons.
   private var reconcileCounter = 0
-  private let reconcileEveryTicks = 33 // ~5s at the 0.15s poll interval
+  private let reconcileEveryTicks = 66 // ~10s at the 0.15s poll interval — gentle on the DDC bus
 
   // MARK: - Configuration
 
@@ -261,10 +261,15 @@ final class SyncController {
     if !wroteOK {
       // DDC not accepted on this display — follow the built-in via gamma. This is
       // the only way to dim a monitor that doesn't speak DDC, so trade backlight
-      // control for a software luminance scale.
-      let level = max(minGamma, dimInput)
-      gamma.set(display.cgDisplayID, factor: level)
-      display.markGammaFollow(level: level)
+      // control for a software luminance scale. Only possible (and only reported
+      // as working) when we resolved a CoreGraphics display id to drive.
+      if display.cgDisplayID != nil {
+        let level = max(minGamma, dimInput)
+        gamma.set(display.cgDisplayID, factor: level)
+        display.markGammaFollow(level: level)
+      } else {
+        display.clearGammaFollow() // no DDC and no gamma path — genuinely unreachable
+      }
       return
     }
     display.clearGammaFollow()
