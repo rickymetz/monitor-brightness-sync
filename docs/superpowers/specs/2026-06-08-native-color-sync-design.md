@@ -84,7 +84,7 @@ All gamma/correction mutations go through `SyncController`'s serial queue (proje
 ## 5. Capture protocol (lock-then-shoot)
 
 1. **Pair** via QR; connection opens.
-2. **Lock:** Mac shows a neutral **mid-gray** fullscreen on the reference display (built-in when present). iOS shows live preview + alignment overlay; when the user is aimed and steady, it **locks WB + exposure** on that mid-gray (mid-gray so the brightest display's white won't clip) and replies `locked`. `G` is frozen for the session.
+2. **Lock:** Mac shows a neutral **mid-gray** fullscreen on the reference display. **Reference selection:** the built-in when present; in clamshell (no built-in) the user picks which external is the reference (default: first/largest external). iOS shows live preview + alignment overlay; when the user is aimed and steady, it **locks WB + exposure** on that mid-gray (mid-gray so the brightest display's white won't clip) and replies `locked`. `G` is frozen for the session.
 3. **Per display** (reference first): Mac shows the **patch card** fullscreen on display *d* and sends `capture {d}`. iOS auto-detects the card, captures with locked settings, runs `PatchCardAnalyzer` → `PatchSamples`, replies `samples {d, …}`. No card / glare → `error`; Mac re-issues `capture {d}` with a `retake` hint.
 4. **Compute & apply:** after the last display, the Mac runs `ColorMatcher`, applies corrections live via `DisplayColorState`, and shows before/after + per-display fine-tune sliders. **Save** persists.
 5. **Teardown:** connection closes; patch windows hidden.
