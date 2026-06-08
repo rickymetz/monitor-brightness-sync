@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let messageHUD = MessageHUD()
   private var allOffKeyPresses = 0
   private var calibrationController: CalibrationWindowController?
+  private var onboardingController: OnboardingWindowController?
   private var controlWindowController: ControlWindowController?
   private var controlVisible = false
   private var calibrationVisible = false
@@ -64,6 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let disabledKey = "disabledMonitors"
   private var disabledIDs: Set<String> = []
 
+  private let onboardedKey = "hasOnboarded"
+
   // MARK: - Launch
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -110,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     setupMediaKeyTap()
     pushToggleStates()
     renderStatus()
-    showControlWindow()
+    showOnboardingOrControl()
   }
 
   func applicationWillTerminate(_ notification: Notification) {
@@ -242,6 +245,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   // MARK: - Windows
+
+  /// On first launch, welcome the user; afterwards go straight to the controls.
+  private func showOnboardingOrControl() {
+    guard !UserDefaults.standard.bool(forKey: onboardedKey) else {
+      showControlWindow()
+      return
+    }
+    let key = onboardedKey
+    let controller = OnboardingWindowController()
+    controller.onFinished = { [weak self] in
+      UserDefaults.standard.set(true, forKey: key)
+      self?.onboardingController = nil
+      self?.showControlWindow()
+    }
+    onboardingController = controller
+    NSApp.setActivationPolicy(.regular) // a visible window needs a non-accessory policy
+    controller.show()
+  }
 
   private func showControlWindow() {
     if controlWindowController == nil {

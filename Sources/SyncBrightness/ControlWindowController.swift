@@ -130,6 +130,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
       ("Allow dimming all the way to black", "Reach true black at the lowest brightness.", blackoutSwitch,
        "Let the external reach true black at the lowest brightness, like the Mac display."),
     ])
+    y = caption(content, y, "Extra-dark dimming uses the display's color table — it can interact with Night Shift, True Tone, or f.lux at very low brightness.")
 
     // Monitors card
     y = sectionHeader(content, y, "Monitors")
@@ -245,6 +246,20 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     build(card)
     content.addSubview(card)
     return y + height + 18
+  }
+
+  /// A small wrapping caption (footnote) tucked under the preceding card.
+  private func caption(_ content: NSView, _ y: CGFloat, _ text: String) -> CGFloat {
+    let label = NSTextField(wrappingLabelWithString: text)
+    label.font = .systemFont(ofSize: 11)
+    label.textColor = .tertiaryLabelColor
+    let w = cardW - 8
+    label.preferredMaxLayoutWidth = w
+    label.frame = NSRect(x: margin + 4, y: y - 12, width: w, height: 14)
+    label.sizeToFit()
+    label.frame = NSRect(x: margin + 4, y: y - 12, width: w, height: label.frame.height)
+    content.addSubview(label)
+    return y - 12 + label.frame.height + 14
   }
 
   private func sectionHeader(_ content: NSView, _ y: CGFloat, _ title: String) -> CGFloat {
