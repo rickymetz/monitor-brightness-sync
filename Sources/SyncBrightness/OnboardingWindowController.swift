@@ -112,13 +112,13 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     let detail = NSTextField(wrappingLabelWithString: point.detail)
     detail.font = .systemFont(ofSize: 12)
     detail.textColor = .secondaryLabelColor
-    detail.frame = NSRect(x: textX, y: y + 20, width: textW, height: 14)
-    detail.preferredMaxLayoutWidth = textW
-    detail.sizeToFit()
-    detail.frame = NSRect(x: textX, y: y + 20, width: textW, height: detail.frame.height)
+    detail.preferredMaxLayoutWidth = textW // wrap within the column…
+    detail.frame.size.width = textW
+    let detailH = detail.fittingSize.height // …then measure the wrapped height
+    detail.frame = NSRect(x: textX, y: y + 20, width: textW, height: detailH)
     content.addSubview(detail)
 
-    return y + 20 + detail.frame.height + 16
+    return y + 20 + detailH + 16
   }
 
   @objc private func getStarted() { window.close() }

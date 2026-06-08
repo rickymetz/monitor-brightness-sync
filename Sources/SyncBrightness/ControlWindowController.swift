@@ -316,11 +316,11 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     label.textColor = .tertiaryLabelColor
     let w = cardW - 8
     label.preferredMaxLayoutWidth = w
-    label.frame = NSRect(x: margin + 4, y: y - 12, width: w, height: 14)
-    label.sizeToFit()
-    label.frame = NSRect(x: margin + 4, y: y - 12, width: w, height: label.frame.height)
+    label.frame.size.width = w
+    let h = label.fittingSize.height
+    label.frame = NSRect(x: margin + 4, y: y - 12, width: w, height: h)
     content.addSubview(label)
-    return y - 12 + label.frame.height + 14
+    return y - 12 + h + 14
   }
 
   private func sectionHeader(_ content: NSView, _ y: CGFloat, _ title: String) -> CGFloat {
