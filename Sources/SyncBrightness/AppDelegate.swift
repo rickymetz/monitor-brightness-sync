@@ -164,6 +164,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     statusMenuItem.toolTip = "The built-in brightness currently being mirrored to your external monitors."
     menu.addItem(statusMenuItem)
 
+    // Full settings live in the control window; the menu is a quick subset.
+    menu.addItem(.separator())
+    let openSettingsItem = NSMenuItem(title: "Open Settings…", action: #selector(openSettings), keyEquivalent: ",")
+    openSettingsItem.target = self
+    openSettingsItem.toolTip = "Open the full settings window (Displays, Dimming, Shortcuts, General)."
+    menu.addItem(openSettingsItem)
+
     // Behavior toggles
     menu.addItem(.separator())
     toggleItem.target = self
@@ -431,6 +438,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   // MARK: - Calibration
+
+  @objc private func openSettings() { showControlWindow() }
 
   @objc private func openCalibration() {
     guard calibrationController == nil else { return }
