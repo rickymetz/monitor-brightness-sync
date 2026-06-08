@@ -328,6 +328,11 @@ final class SyncController {
     DispatchQueue.main.async { self.onMonitors?(states) }
   }
 
+  /// Thread-safe snapshot of current externals for UI (id, cgDisplayID, name).
+  func snapshotExternals() -> [(id: String, cg: CGDirectDisplayID?, name: String)] {
+    queue.sync { externals.map { ($0.id, $0.cgDisplayID, $0.name) } }
+  }
+
   private func registerReconfigurationCallback() {
     let context = Unmanaged.passUnretained(self).toOpaque()
     CGDisplayRegisterReconfigurationCallback({ _, flags, userInfo in

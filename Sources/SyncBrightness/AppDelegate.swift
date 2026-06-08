@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var calibrationController: CalibrationWindowController?
   private var onboardingController: OnboardingWindowController?
   private var controlWindowController: ControlWindowController?
+  private var colorSyncWC: ColorSyncWindowController?
   private var controlVisible = false
   private var calibrationVisible = false
   private var isCalibrating = false
@@ -386,6 +387,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       controller.onSetKeyControl = { [weak self] on in self?.setKeyControl(on) }
       controller.onCalibrate = { [weak self] in self?.openCalibration() }
       controller.onReset = { [weak self] in self?.resetCalibration() }
+      controller.onColorSync = { [weak self] in self?.openColorSync() }
       controller.onSetMonitorEnabled = { [weak self] id, enabled in self?.setMonitorEnabled(id, enabled) }
       controller.onSetMonitorBrightness = { [weak self] id, fraction in self?.sync.setManual(id: id, fraction: fraction) }
       controller.onSetHotkeysEnabled = { [weak self] on in self?.setHotkeysEnabled(on) }
@@ -472,6 +474,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   // MARK: - Calibration
 
   @objc private func openSettings() { showControlWindow() }
+
+  func openColorSync() {
+    let wc = ColorSyncWindowController()
+    wc.displays = buildColorSyncDisplayList()
+    wc.onSave = { [weak self] map in self?.saveColorCorrections(map) }
+    wc.begin()
+    colorSyncWC = wc
+  }
+
+  /// Built-in first (reference), then externals; pair each NSScreen to a display id.
+  private func buildColorSyncDisplayList() -> [(id: String, screen: NSScreen, label: String)] {
+    let exts = sync.snapshotExternals()
+    var out: [(id: String, screen: NSScreen, label: String)] = []
+    for screen in NSScreen.screens {
+      guard let num = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { continue }
+      let cg = CGDirectDisplayID(num.uint32Value)
+      if CGDisplayIsBuiltin(cg) != 0 {
+        out.insert((id: "builtin", screen: screen, label: "Built-in"), at: 0)
+      } else if let ext = exts.first(where: { $0.cg == cg }) {
+        out.append((id: ext.id, screen: screen, label: ext.name))
+      }
+    }
+    return out
+  }
 
   @objc private func openCalibration() {
     guard calibrationController == nil else { return }
