@@ -1,3 +1,4 @@
+import Carbon // Apple Event constants for login-item launch detection
 import Cocoa
 import CoreGraphics
 
@@ -130,7 +131,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     applyHotkeys()
     pushToggleStates()
     renderStatus()
-    showOnboardingOrControl()
+    // Don't pop the window when macOS launches us at login — just live in the
+    // menu bar. Manual launches (and first-run onboarding) still open it.
+    if !launchedAsLoginItem() { showOnboardingOrControl() }
+  }
+
+  /// True when macOS launched us as a login item rather than the user opening the
+  /// app, detected via the open-application Apple Event's login-item flag.
+  private func launchedAsLoginItem() -> Bool {
+    guard let event = NSAppleEventManager.shared().currentAppleEvent,
+          event.eventID == kAEOpenApplication else { return false }
+    return event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
   }
 
   func applicationWillTerminate(_ notification: Notification) {
