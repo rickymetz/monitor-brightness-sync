@@ -30,48 +30,50 @@ final class DisplayColorState {
   /// Dim a display (1 = no dimming). Preserves GammaDimmer's contract.
   func set(_ id: CGDirectDisplayID?, factor: Double) {
     guard let id else { return }
+    let wasTrivial = isTrivial(id)
     dims[id] = max(0, min(1, factor))
-    apply(id)
+    applyTransition(id, wasTrivial: wasTrivial)
   }
 
   /// Set the per-display color correction (.identity to clear).
   func setCorrection(_ id: CGDirectDisplayID?, _ c: ColorCorrection) {
     guard let id else { return }
+    let wasTrivial = isTrivial(id)
     corrections[id] = c
-    apply(id)
+    applyTransition(id, wasTrivial: wasTrivial)
   }
 
-  /// Restore color-profile gamma everywhere (call on quit), then re-apply any
-  /// non-trivial state. CGDisplayRestoreColorSyncSettings resets every display.
+  /// Clear all state and restore color-profile gamma everywhere (call on quit).
   func reset() {
+    dims.removeAll()
+    corrections.removeAll()
     CGDisplayRestoreColorSyncSettings()
-    for id in Set(dims.keys).union(corrections.keys) { apply(id, restoring: true) }
   }
 
   private func isTrivial(_ id: CGDirectDisplayID) -> Bool {
     (dims[id] ?? 1) >= 0.999 && (corrections[id] ?? .identity) == .identity
   }
 
-  private func apply(_ id: CGDirectDisplayID, restoring: Bool = false) {
-    let dim = dims[id] ?? 1
-    let c = corrections[id] ?? .identity
+  private func applyTransition(_ id: CGDirectDisplayID, wasTrivial: Bool) {
     if isTrivial(id) {
-      if !restoring { restoreOthers(except: nil) } // clear this display back to profile
-      return
+      if !wasTrivial { restoreAndReapply() }   // only on the non-trivial -> trivial edge
+    } else {
+      writeFormula(id)
     }
-    let f = DisplayColorState.formula(dim: dim, correction: c)
+  }
+
+  private func writeFormula(_ id: CGDirectDisplayID) {
+    let f = DisplayColorState.formula(dim: dims[id] ?? 1, correction: corrections[id] ?? .identity)
     CGSetDisplayTransferByFormula(id,
       f.red.min, f.red.max, f.red.gamma,
       f.green.min, f.green.max, f.green.gamma,
       f.blue.min, f.blue.max, f.blue.gamma)
   }
 
-  // Clearing one display requires a global restore (no per-display restore API),
-  // then re-applying the others that should stay non-trivial.
-  private func restoreOthers(except keep: CGDirectDisplayID?) {
+  // Global restore (no per-display restore API), then re-write the displays that
+  // should stay non-trivial.
+  private func restoreAndReapply() {
     CGDisplayRestoreColorSyncSettings()
-    for id in Set(dims.keys).union(corrections.keys) where id != keep && !isTrivial(id) {
-      apply(id, restoring: true)
-    }
+    for id in Set(dims.keys).union(corrections.keys) where !isTrivial(id) { writeFormula(id) }
   }
 }
