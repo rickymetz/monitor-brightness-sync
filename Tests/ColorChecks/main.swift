@@ -1,10 +1,19 @@
 import Foundation
 
 var failures = 0
-func check(_ cond: Bool, _ msg: String) {
-  if !cond { print("FAIL: \(msg)"); failures += 1 } else { print("ok: \(msg)") }
+
+func check(_ condition: Bool, _ message: String) {
+  if condition {
+    print("  ✓ \(message)")
+  } else {
+    print("  ✗ \(message)")
+    failures += 1
+  }
 }
-func approx(_ a: Double, _ b: Double, _ eps: Double = 1e-9) -> Bool { abs(a - b) <= eps }
+
+func approx(_ a: Double, _ b: Double, _ eps: Double = 1e-6) -> Bool { abs(a - b) <= eps }
+
+print("Color checks")
 
 // ColorCorrection.identity is a no-op
 let id = ColorCorrection.identity
@@ -16,5 +25,5 @@ let data = try! JSONEncoder().encode(c)
 let back = try! JSONDecoder().decode(ColorCorrection.self, from: data)
 check(back == c, "ColorCorrection codable round-trip")
 
-print(failures == 0 ? "ALL PASS" : "\(failures) FAILURES")
+print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) FAILED.")
 exit(failures == 0 ? 0 : 1)

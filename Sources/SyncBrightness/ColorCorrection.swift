@@ -19,6 +19,7 @@ struct ColorCorrection: Codable, Equatable {
 }
 
 /// Median patch colors sampled from one photo of the patch card on one display.
+/// Transient (derived during calibration); never persisted, so it isn't Codable.
 struct PatchSamples: Equatable {
   var white: RGB
   var gray50: RGB
