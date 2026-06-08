@@ -30,6 +30,8 @@ run_check color-checks \
   Sources/SyncBrightness/ColorMatcher.swift \
   Sources/SyncBrightness/PatchCardLayout.swift \
   Sources/SyncBrightness/PatchCardAnalyzer.swift \
+  Sources/SyncBrightness/ColorSyncMessages.swift \
+  Sources/SyncBrightness/ColorSyncSession.swift \
   Tests/ColorChecks/main.swift
   # DisplayColorState.swift: needed for the DisplayColorState.formula tests in the same driver
 

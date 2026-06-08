@@ -131,5 +131,49 @@ do {
   } else { check(false, "analyzer returned nil on a clean card") }
 }
 
+// ---- ColorSyncSession ----
+final class FakePeer: ColorSyncPeer {
+  var sent: [MacToPhone] = []
+  func send(_ m: MacToPhone) { sent.append(m) }
+}
+do {
+  let peer = FakePeer()
+  let displays = [DisplayRef(id: "builtin", label: "Built-in"),
+                  DisplayRef(id: "ext", label: "Ext")]
+  let session = ColorSyncSession(displays: displays, referenceID: "builtin", peer: peer)
+  var shownCards: [String] = []
+  var preparedRef: String? = nil
+  var completed: [String: ColorCorrection]? = nil
+  session.onShowCard = { shownCards.append($0) }
+  session.onPrepareReference = { preparedRef = $0 }
+  session.onComplete = { completed = $0 }
+
+  session.start()
+  check(session.state == .awaitingLock, "start -> awaitingLock")
+  check(preparedRef == "builtin", "prepared reference display")
+  check(peer.sent.last == .prepareLock(referenceLabel: "Built-in"), "sent prepareLock")
+
+  session.handle(.locked)
+  check(shownCards.last == "builtin", "show card on first display")
+  check(peer.sent.last == .capture(displayID: "builtin", label: "Built-in"), "capture builtin")
+
+  session.handle(.samples(displayID: "builtin", samples: samplesWithWhite(RGB(r: 1, g: 1, b: 1))))
+  check(peer.sent.last == .capture(displayID: "ext", label: "Ext"), "advance to ext")
+
+  session.handle(.samples(displayID: "ext", samples: samplesWithWhite(RGB(r: 1.2, g: 1, b: 1))))
+  check(completed != nil, "completed corrections")
+  check(completed!["builtin"] == .identity, "reference identity")
+  check(completed!["ext"]!.redGain < 1.0, "ext warm -> red attenuated")
+  check(peer.sent.last == .done, "sent done")
+  check(session.state == .done, "state done")
+
+  let peer2 = FakePeer()
+  let s2 = ColorSyncSession(displays: displays, referenceID: "builtin", peer: peer2)
+  s2.start(); s2.handle(.locked)
+  s2.handle(.error(reason: "no card"))
+  if case .retake(let id, _) = peer2.sent.last! { check(id == "builtin", "retake same display") }
+  else { check(false, "expected retake after error") }
+}
+
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) FAILED.")
 exit(failures == 0 ? 0 : 1)
