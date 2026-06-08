@@ -17,7 +17,7 @@ final class SyncController {
   private let queue = DispatchQueue(label: "com.rick.syncbrightness.sync")
   private let pollInterval: TimeInterval = 0.15
   private let threshold = 0.004
-  private let gamma = GammaDimmer()
+  private let gamma = DisplayColorState()
 
   private var timer: DispatchSourceTimer?
   private var externals: [ExternalDisplay] = []
