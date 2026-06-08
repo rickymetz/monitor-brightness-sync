@@ -19,6 +19,9 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
   var onClose: () -> Void = {}
   var onSetMonitorEnabled: (String, Bool) -> Void = { _, _ in }
   var onSetMonitorBrightness: (String, Double) -> Void = { _, _ in }
+  var onSetHotkeysEnabled: (Bool) -> Void = { _ in }
+  var onSetHotkeyUp: (KeyCombo?) -> Void = { _ in }
+  var onSetHotkeyDown: (KeyCombo?) -> Void = { _ in }
 
   private(set) var window: NSWindow!
 
@@ -37,6 +40,9 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
   private let blackoutSwitch = NSSwitch()
   private let keyControlSwitch = NSSwitch()
   private let loginSwitch = NSSwitch()
+  private let hotkeysSwitch = NSSwitch()
+  private let upRecorder = KeyRecorder()
+  private let downRecorder = KeyRecorder()
 
   private var monitors: [MonitorState] = []
   private var rowIDs: [String] = []
@@ -61,6 +67,9 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     blackoutSwitch.target = self; blackoutSwitch.action = #selector(toggleBlackout)
     keyControlSwitch.target = self; keyControlSwitch.action = #selector(toggleKeyControl)
     loginSwitch.target = self; loginSwitch.action = #selector(toggleLogin)
+    hotkeysSwitch.target = self; hotkeysSwitch.action = #selector(toggleHotkeys)
+    upRecorder.onCapture = { [weak self] combo in self?.onSetHotkeyUp(combo) }
+    downRecorder.onCapture = { [weak self] combo in self?.onSetHotkeyDown(combo) }
     rebuild()
   }
 
@@ -80,6 +89,14 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     blackoutSwitch.state = blackout ? .on : .off
     loginSwitch.state = login ? .on : .off
     keyControlSwitch.state = keyControl ? .on : .off
+  }
+
+  func updateHotkeys(enabled: Bool, up: KeyCombo, down: KeyCombo) {
+    hotkeysSwitch.state = enabled ? .on : .off
+    upRecorder.combo = up
+    downRecorder.combo = down
+    upRecorder.isEnabled = enabled
+    downRecorder.isEnabled = enabled
   }
 
   func updateMonitors(_ monitors: [MonitorState]) {
@@ -144,6 +161,10 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
       ("Launch at login", "Open automatically when you log in.", loginSwitch,
        "Open Monitor Brightness Sync automatically when you log in."),
     ])
+
+    // Keyboard shortcuts card
+    y = sectionHeader(content, y, "Keyboard shortcuts")
+    y = buildHotkeysCard(content, y)
 
     // Footer actions
     y += 6
@@ -226,6 +247,34 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     }
     content.addSubview(card)
     return y + height + 18
+  }
+
+  private func buildHotkeysCard(_ content: NSView, _ y: CGFloat) -> CGFloat {
+    let height = toggleRowH + 2 * rowH + 2 * cardPad
+    let card = styledCard(at: y, height: height)
+
+    placeToggle(card, top: cardPad, title: "Custom brightness shortcuts",
+                subtitle: "Use your own keys to change brightness — handy on a keyboard without brightness keys.",
+                control: hotkeysSwitch,
+                tooltip: "Register global shortcuts that change brightness like the brightness keys do.")
+    placeRecorder(card, top: cardPad + toggleRowH, title: "Brightness up", recorder: upRecorder)
+    placeRecorder(card, top: cardPad + toggleRowH + rowH, title: "Brightness down", recorder: downRecorder)
+
+    content.addSubview(card)
+    return y + height + 18
+  }
+
+  private func placeRecorder(_ card: NSView, top: CGFloat, title: String, recorder: KeyRecorder) {
+    separatorAbsolute(card, top)
+    let label = NSTextField(labelWithString: title)
+    label.font = .systemFont(ofSize: 13)
+    label.frame = NSRect(x: 16, y: top + (rowH - 17) / 2, width: cardW - 16 - 140, height: 17)
+    card.addSubview(label)
+
+    recorder.setAccessibilityLabel("\(title) shortcut")
+    let w: CGFloat = 124
+    recorder.frame = NSRect(x: cardW - 16 - w, y: top + (rowH - 24) / 2, width: w, height: 24)
+    card.addSubview(recorder)
   }
 
   // MARK: - Card / row builders
@@ -328,6 +377,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
   @objc private func toggleBlackout() { onSetBlackout(blackoutSwitch.state == .on) }
   @objc private func toggleLogin() { onSetLoginItem(loginSwitch.state == .on) }
   @objc private func toggleKeyControl() { onSetKeyControl(keyControlSwitch.state == .on) }
+  @objc private func toggleHotkeys() { onSetHotkeysEnabled(hotkeysSwitch.state == .on) }
   @objc private func calibrate() { onCalibrate() }
   @objc private func reset() { onReset() }
   @objc private func quit() { NSApp.terminate(nil) }

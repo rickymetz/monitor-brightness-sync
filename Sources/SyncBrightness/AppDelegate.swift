@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   private let sync = SyncController()
   private let mediaKeyTap = MediaKeyTap()
+  private let hotKeyUp = HotKey()
+  private let hotKeyDown = HotKey()
   private let hud = BrightnessHUD()
   private let messageHUD = MessageHUD()
   private var allOffKeyPresses = 0
@@ -67,6 +69,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   private let onboardedKey = "hasOnboarded"
 
+  private let hotkeysEnabledKey = "hotkeysEnabled"
+  private var hotkeysEnabled: Bool { // opt-in; defaults off so we don't grab keys uninvited
+    get { UserDefaults.standard.bool(forKey: hotkeysEnabledKey) }
+    set { UserDefaults.standard.set(newValue, forKey: hotkeysEnabledKey) }
+  }
+  private let hotkeyUpKey = "hotkeyUp"
+  private let hotkeyDownKey = "hotkeyDown"
+  private var hotkeyUp = KeyCombo.defaultUp
+  private var hotkeyDown = KeyCombo.defaultDown
+
   // MARK: - Launch
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -80,6 +92,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     profiles = loadProfiles()
     disabledIDs = Set(UserDefaults.standard.stringArray(forKey: disabledKey) ?? [])
+    hotkeyUp = loadCombo(hotkeyUpKey) ?? .defaultUp
+    hotkeyDown = loadCombo(hotkeyDownKey) ?? .defaultDown
+    hotKeyUp.onPress = { [weak self] in self?.handleHotKey(increase: true) }
+    hotKeyDown.onPress = { [weak self] in self?.handleHotKey(increase: false) }
 
     buildStatusItem()
 
@@ -111,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     setupWakeObservers()
     setupMediaKeyTap()
+    applyHotkeys()
     pushToggleStates()
     renderStatus()
     showOnboardingOrControl()
@@ -207,36 +224,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private func setupMediaKeyTap() {
     mediaKeyTap.onBrightnessKey = { [weak self] increase, isKeyDown in
       guard let self else { return false }
-      // Only act in clamshell (no built-in) and only if there's an enabled
-      // external to control — otherwise let the key pass through and show nothing.
+      // Only act in clamshell (no built-in); otherwise let the key pass through
+      // so macOS keeps driving the built-in and our sync mirrors it.
       guard BuiltinBrightness.builtinDisplayID() == nil else { return false }
-      let controllable = self.monitors.filter { $0.enabled }
-      guard let target = controllable.first else {
-        // Clamshell, but every external is turned off in the app.
-        guard !self.monitors.isEmpty else { return false } // nothing connected — pass through
-        if isKeyDown {
-          self.allOffKeyPresses += 1
-          if self.allOffKeyPresses >= 2 { // hint once they're clearly trying
-            self.messageHUD.show("Turn on a monitor to use the brightness keys")
-          }
-        }
-        return true // swallow; we explain via the hint instead of doing nothing
-      }
-      self.allOffKeyPresses = 0
-      if isKeyDown {
-        let step = 1.0 / 16.0
-        let base = self.externalOnlyLevel ?? target.brightness
-        let level = max(0, min(1, base + (increase ? step : -step)))
-        self.externalOnlyLevel = level
-        self.sync.applyExternalOnly(level: level)
-        self.hud.show(level: level, name: target.name)
-      }
+      guard !self.monitors.isEmpty else { return false } // nothing connected — pass through
+      if isKeyDown { self.adjustExternalOnly(increase: increase) }
       return true // swallow the key in clamshell mode
     }
     // Only resume the tap on launch if the user previously enabled it.
     if keyControlEnabled, MediaKeyTap.accessibilityGranted(prompt: false) {
       mediaKeyTap.start()
     }
+  }
+
+  /// Adjust the external(s) directly by one step (clamshell / external-only).
+  /// Shared by the brightness-key tap and the custom hotkeys.
+  @discardableResult
+  private func adjustExternalOnly(increase: Bool) -> Bool {
+    let controllable = monitors.filter { $0.enabled }
+    guard let target = controllable.first else {
+      // Clamshell, but every external is turned off in the app.
+      guard !monitors.isEmpty else { return false }
+      allOffKeyPresses += 1
+      if allOffKeyPresses >= 2 { // hint once they're clearly trying
+        messageHUD.show("Turn on a monitor to use the brightness keys")
+      }
+      return true
+    }
+    allOffKeyPresses = 0
+    let step = 1.0 / 16.0
+    let base = externalOnlyLevel ?? target.brightness
+    let level = max(0, min(1, base + (increase ? step : -step)))
+    externalOnlyLevel = level
+    sync.applyExternalOnly(level: level)
+    hud.show(level: level, name: target.name)
+    return true
+  }
+
+  // MARK: - Custom global hotkeys
+
+  /// Custom hotkeys replace the brightness keys: with the lid open they nudge the
+  /// built-in (the sync loop mirrors it to externals); in clamshell they drive
+  /// the external directly. Carbon hotkeys are system-wide and need no grant.
+  private func handleHotKey(increase: Bool) {
+    if let builtinID = BuiltinBrightness.builtinDisplayID() {
+      guard let current = BuiltinBrightness.fraction(of: builtinID) else { return }
+      let step = 1.0 / 16.0
+      let level = max(0, min(1, current + (increase ? step : -step)))
+      BuiltinBrightness.setFraction(level, of: builtinID)
+      hud.show(level: level, name: "Built-in Display")
+    } else {
+      adjustExternalOnly(increase: increase)
+    }
+  }
+
+  private func applyHotkeys() {
+    guard hotkeysEnabled else {
+      hotKeyUp.unregister(); hotKeyDown.unregister()
+      return
+    }
+    let okUp = hotKeyUp.register(hotkeyUp)
+    let okDown = hotKeyDown.register(hotkeyDown)
+    if !okUp || !okDown {
+      messageHUD.show("Couldn't register a shortcut — it may already be in use")
+    }
+  }
+
+  private func setHotkeysEnabled(_ on: Bool) {
+    hotkeysEnabled = on
+    applyHotkeys()
+    pushToggleStates()
+  }
+
+  private func setHotkey(up: Bool, combo: KeyCombo?) {
+    if up { hotkeyUp = combo ?? .defaultUp; saveCombo(hotkeyUp, hotkeyUpKey) }
+    else { hotkeyDown = combo ?? .defaultDown; saveCombo(hotkeyDown, hotkeyDownKey) }
+    applyHotkeys()
+    pushToggleStates()
+  }
+
+  private func loadCombo(_ key: String) -> KeyCombo? {
+    guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+    return try? JSONDecoder().decode(KeyCombo.self, from: data)
+  }
+
+  private func saveCombo(_ combo: KeyCombo, _ key: String) {
+    if let data = try? JSONEncoder().encode(combo) { UserDefaults.standard.set(data, forKey: key) }
   }
 
 
@@ -276,6 +349,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       controller.onReset = { [weak self] in self?.resetCalibration() }
       controller.onSetMonitorEnabled = { [weak self] id, enabled in self?.setMonitorEnabled(id, enabled) }
       controller.onSetMonitorBrightness = { [weak self] id, fraction in self?.sync.setManual(id: id, fraction: fraction) }
+      controller.onSetHotkeysEnabled = { [weak self] on in self?.setHotkeysEnabled(on) }
+      controller.onSetHotkeyUp = { [weak self] combo in self?.setHotkey(up: true, combo: combo) }
+      controller.onSetHotkeyDown = { [weak self] combo in self?.setHotkey(up: false, combo: combo) }
       controller.onClose = { [weak self] in
         self?.controlVisible = false
         self?.updateActivationPolicy()
@@ -490,6 +566,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                            blackout: allowBlackout,
                                            login: LoginItem.isEnabled,
                                            keyControl: mediaKeyTap.isRunning)
+    controlWindowController?.updateHotkeys(enabled: hotkeysEnabled, up: hotkeyUp, down: hotkeyDown)
   }
 
   // MARK: - Status
