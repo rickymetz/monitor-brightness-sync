@@ -180,8 +180,20 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     y += 30 + 18
 
     content.frame = NSRect(x: 0, y: 0, width: winW, height: y)
-    window.contentView = content
-    window.setContentSize(NSSize(width: winW, height: y))
+
+    // Cap the window to the screen and scroll if the content is taller, so cards
+    // near the bottom (Keyboard shortcuts, footer) stay reachable on any display.
+    let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: winW, height: y))
+    scroll.drawsBackground = false
+    scroll.hasVerticalScroller = true
+    scroll.hasHorizontalScroller = false
+    scroll.autohidesScrollers = true
+    scroll.documentView = content
+    window.contentView = scroll
+
+    let maxH = ((window.screen ?? NSScreen.main)?.visibleFrame.height ?? 1000) - 40
+    window.setContentSize(NSSize(width: winW, height: min(y, maxH)))
+    content.scroll(NSPoint(x: 0, y: 0)) // flipped doc: show the top
   }
 
   private func buildMonitorsCard(_ content: NSView, _ y: CGFloat) -> CGFloat {
