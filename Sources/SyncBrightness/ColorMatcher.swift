@@ -16,11 +16,13 @@ enum ColorMatcher {
     guard let ref = measurements.first(where: { $0.displayID == referenceID }) else { return [:] }
     let rw = ref.samples.white
 
+    // dead channel (no emission): don't attenuate — can't compensate for missing light
+    func gain(_ refC: Double, _ tgtC: Double) -> Double { tgtC > 1e-6 ? refC / tgtC : 1 }
+
     var result: [String: ColorCorrection] = [:]
     for m in measurements {
       if m.displayID == referenceID { result[m.displayID] = .identity; continue }
       let tw = m.samples.white
-      func gain(_ refC: Double, _ tgtC: Double) -> Double { tgtC > 1e-6 ? refC / tgtC : 1 }
       var r = gain(rw.r, tw.r)
       var g = gain(rw.g, tw.g)
       var b = gain(rw.b, tw.b)

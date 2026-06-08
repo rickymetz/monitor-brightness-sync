@@ -29,5 +29,6 @@ run_check color-checks \
   Sources/SyncBrightness/DisplayColorState.swift \
   Sources/SyncBrightness/ColorMatcher.swift \
   Tests/ColorChecks/main.swift
+  # DisplayColorState.swift: needed for the DisplayColorState.formula tests in the same driver
 
 exit "$status"

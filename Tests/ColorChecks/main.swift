@@ -79,6 +79,7 @@ do {
                    DisplayMeasurement(displayID: "ext", samples: tgtS2)],
     referenceID: "builtin")
   check(approx(out2["ext"]!.redGain, c.redGain), "locked G cancels (red)")
+  check(approx(out2["ext"]!.greenGain, c.greenGain), "locked G cancels (green)")
   check(approx(out2["ext"]!.blueGain, c.blueGain), "locked G cancels (blue)")
 }
 
