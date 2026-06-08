@@ -206,6 +206,38 @@ enum DDC {
     return chk
   }
 
+  // MARK: - Debug
+
+  /// Lists every display-related IORegistry entry with its Location, for
+  /// diagnosing detection (e.g. why nothing is found in clamshell).
+  static func debugServiceDump() -> [String] {
+    var lines: [String] = []
+    let root = IORegistryGetRootEntry(kIOMainPortDefault)
+    guard root != 0 else { return ["IORegistry root unavailable"] }
+    defer { IOObjectRelease(root) }
+    var iterator = io_iterator_t()
+    guard IORegistryEntryCreateIterator(root, "IOService", IOOptionBits(kIORegistryIterateRecursively), &iterator) == KERN_SUCCESS else {
+      return ["IORegistry iterator failed"]
+    }
+    defer { IOObjectRelease(iterator) }
+    let nameBuf = UnsafeMutablePointer<CChar>.allocate(capacity: MemoryLayout<io_name_t>.size)
+    defer { nameBuf.deallocate() }
+
+    while case let entry = IOIteratorNext(iterator), entry != IO_OBJECT_NULL {
+      defer { IOObjectRelease(entry) }
+      guard IORegistryEntryGetName(entry, nameBuf) == KERN_SUCCESS else { continue }
+      let name = String(cString: nameBuf)
+      if name == "DCPAVServiceProxy" {
+        let loc = stringProperty(of: entry, key: "Location") ?? "(none)"
+        let created = IOAVServiceCreateWithService(kCFAllocatorDefault, entry) != nil
+        lines.append("DCPAVServiceProxy  Location=\(loc)  IOAVService=\(created ? "yes" : "no")")
+      } else if name == "AppleCLCD2" || name == "IOMobileFramebufferShim" {
+        lines.append("Framebuffer \(name)  product=\(identity(of: entry)?.name ?? "?")")
+      }
+    }
+    return lines.isEmpty ? ["(no display services found)"] : lines
+  }
+
   // MARK: - IORegistry property helpers
 
   private static func stringProperty(of entry: io_service_t, key: String) -> String? {

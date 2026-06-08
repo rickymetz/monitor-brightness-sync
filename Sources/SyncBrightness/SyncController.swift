@@ -148,6 +148,14 @@ final class SyncController {
       self.timer = timer
       timer.resume()
     }
+    // Displays can enumerate a moment after launch (e.g. booting into clamshell),
+    // and a display already present at that point fires no "added" event. Retry
+    // the scan a few times if nothing was found yet.
+    for delay in [1.5, 4.0, 8.0] {
+      queue.asyncAfter(deadline: .now() + delay) {
+        if self.externals.isEmpty { self.rescanDisplays() }
+      }
+    }
   }
 
   /// Re-apply after wake — monitors come back slowly and may have forgotten

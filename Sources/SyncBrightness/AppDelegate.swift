@@ -6,7 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let statusMenuItem = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
   private let toggleItem = NSMenuItem(title: "Sync external brightness", action: #selector(toggleSync), keyEquivalent: "")
   private let dimmingItem = NSMenuItem(title: "Allow extra-dark dimming", action: #selector(toggleDimming), keyEquivalent: "")
-  private let blackoutItem = NSMenuItem(title: "Dim all the way to black", action: #selector(toggleBlackout), keyEquivalent: "")
+  private let blackoutItem = NSMenuItem(title: "Allow dimming all the way to black", action: #selector(toggleBlackout), keyEquivalent: "")
   private let loginItem = NSMenuItem(title: "Launch at login", action: #selector(toggleLoginItem), keyEquivalent: "")
   private let keyControlItem = NSMenuItem(title: "Use brightness keys with lid closed", action: #selector(enableKeyControl), keyEquivalent: "")
   private let monitorsMenu = NSMenu()
@@ -14,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let sync = SyncController()
   private let mediaKeyTap = MediaKeyTap()
   private let hud = BrightnessHUD()
+  private let messageHUD = MessageHUD()
+  private var allOffKeyPresses = 0
   private var calibrationController: CalibrationWindowController?
   private var controlWindowController: ControlWindowController?
   private var controlVisible = false
@@ -143,7 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     toggleItem.toolTip = "Mirror the built-in display's brightness onto your external monitors."
     menu.addItem(toggleItem)
     dimmingItem.target = self
-    dimmingItem.toolTip = "Software-dims the external below its hardware minimum so it can match the Mac's darkness at low brightness."
+    dimmingItem.toolTip = "Dims the external below its hardware minimum (in software) so it can match the Mac's darkness at low brightness."
     menu.addItem(dimmingItem)
     blackoutItem.target = self
     blackoutItem.toolTip = "At the lowest brightness, let the external go completely black, like the Mac display. Turns on extra-dark dimming."
@@ -163,9 +165,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     calibrateItem.target = self
     calibrateItem.toolTip = "Match each external monitor to the built-in by eye at several brightness levels."
     menu.addItem(calibrateItem)
-    let resetItem = NSMenuItem(title: "Reset connected monitor", action: #selector(resetCalibration), keyEquivalent: "")
+    let resetItem = NSMenuItem(title: "Reset calibration", action: #selector(resetCalibration), keyEquivalent: "")
     resetItem.target = self
-    resetItem.toolTip = "Clear the connected monitor's calibration back to the default."
+    resetItem.toolTip = "Reset the connected monitor(s) calibration to the default."
     menu.addItem(resetItem)
 
     // App
@@ -194,15 +196,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private func setupMediaKeyTap() {
     mediaKeyTap.onBrightnessKey = { [weak self] increase, isKeyDown in
       guard let self else { return false }
-      // Built-in present: let macOS drive it; the poller mirrors to externals.
-      guard BuiltinBrightness.builtinDisplayID() == nil, !self.monitors.isEmpty else { return false }
+      // Only act in clamshell (no built-in) and only if there's an enabled
+      // external to control — otherwise let the key pass through and show nothing.
+      guard BuiltinBrightness.builtinDisplayID() == nil else { return false }
+      let controllable = self.monitors.filter { $0.enabled }
+      guard let target = controllable.first else {
+        // Clamshell, but every external is turned off in the app.
+        guard !self.monitors.isEmpty else { return false } // nothing connected — pass through
+        if isKeyDown {
+          self.allOffKeyPresses += 1
+          if self.allOffKeyPresses >= 2 { // hint once they're clearly trying
+            self.messageHUD.show("Turn on a monitor to use the brightness keys")
+          }
+        }
+        return true // swallow; we explain via the hint instead of doing nothing
+      }
+      self.allOffKeyPresses = 0
       if isKeyDown {
         let step = 1.0 / 16.0
-        let base = self.externalOnlyLevel ?? (self.monitors.first?.brightness ?? 0.5)
+        let base = self.externalOnlyLevel ?? target.brightness
         let level = max(0, min(1, base + (increase ? step : -step)))
         self.externalOnlyLevel = level
         self.sync.applyExternalOnly(level: level)
-        self.hud.show(level: level)
+        self.hud.show(level: level, name: target.name)
       }
       return true // swallow the key in clamshell mode
     }
@@ -211,6 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       mediaKeyTap.start()
     }
   }
+
 
   private func updateKeyControlItem() {
     keyControlItem.state = mediaKeyTap.isRunning ? .on : .off // checkmark reflects on/off
@@ -457,7 +474,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     } else if !hasSynced {
       title = "Starting…"; badge = ""
     } else if lastExternalCount == 0 {
-      title = "No external display found"; badge = " --"
+      title = "No external display connected"; badge = " --"
     } else if let bad = unhealthy {
       title = "⚠ \(bad.name) not responding"; badge = " ⚠"
     } else if !isEnabled {
