@@ -83,5 +83,17 @@ do {
   check(approx(out2["ext"]!.blueGain, c.blueGain), "locked G cancels (blue)")
 }
 
+// ---- PatchCardLayout ----
+do {
+  let c00 = PatchCardLayout.cellCenter(col: 0, row: 0)
+  let c20 = PatchCardLayout.cellCenter(col: 2, row: 0)
+  check(c00.x < c20.x, "col 0 is left of col 2")
+  let c01 = PatchCardLayout.cellCenter(col: 0, row: 1)
+  check(c01.y > c00.y, "row 1 is above row 0")
+  check(PatchCardLayout.role(col: 0, row: 1) == .white, "top-left is white")
+  check(PatchCardLayout.role(col: 0, row: 0) == .red, "bottom-left is red")
+  check(PatchCardLayout.allRoles.count == 6, "six patches")
+}
+
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) FAILED.")
 exit(failures == 0 ? 0 : 1)
