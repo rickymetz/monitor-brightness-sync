@@ -189,7 +189,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     center.addObserver(self, selector: #selector(systemDidWake), name: NSWorkspace.screensDidWakeNotification, object: nil)
   }
 
-  @objc private func systemDidWake() { sync.wake() }
+  @objc private func systemDidWake() {
+    externalOnlyLevel = nil // re-seed from the monitor's real brightness after wake
+    sync.wake()
+  }
 
   // MARK: - External-only key control (clamshell)
 

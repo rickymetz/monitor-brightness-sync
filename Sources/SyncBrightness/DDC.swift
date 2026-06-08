@@ -57,13 +57,27 @@ final class ExternalDisplay {
   }
 
   /// Probe the monitor for its reported brightness range. Best-effort; also
-  /// records whether the monitor answers reads at all.
+  /// records whether the monitor answers reads at all, and seeds our notion of
+  /// the current level from the monitor's actual brightness so relative key
+  /// adjustments (clamshell/external-only) move from the real value, not 0.
+  /// This runs only at scan/wake (not the hot sync loop), so it can retry hard.
   func refreshMaxBrightness() {
-    if let result = DDC.read(service: service, command: kVCPBrightness), result.max > 0 {
+    if let result = DDC.read(service: service, command: kVCPBrightness, retries: 4), result.max > 0 {
       maxBrightness = result.max
       readResponsive = true
+      if lastSetFraction == nil {
+        lastSetFraction = max(0.0, min(1.0, Double(result.current) / Double(result.max)))
+      }
     } else {
       readResponsive = false
+    }
+    // Second read path: if DDC wouldn't give us a starting level, ask
+    // DisplayServices (the same private API macOS uses) via the CG display id.
+    // Many monitors answer this even when raw DDC reads are flaky. Ignore a 0 —
+    // that's usually "couldn't read" rather than a genuine zero.
+    if lastSetFraction == nil, let cgID = cgDisplayID,
+       let fraction = BuiltinBrightness.fraction(of: cgID), fraction > 0 {
+      lastSetFraction = fraction
     }
   }
 
