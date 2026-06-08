@@ -66,19 +66,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var profiles: [String: BrightnessCurve] = [:]
 
   private let colorProfilesKey = "colorCorrectionProfiles"
+  private var colorCorrections: [String: ColorCorrection] = [:]
 
-  func loadColorCorrections() -> [String: ColorCorrection] {
+  private func loadColorCorrections() -> [String: ColorCorrection] {
     guard let data = UserDefaults.standard.data(forKey: colorProfilesKey),
           let decoded = try? JSONDecoder().decode([String: ColorCorrection].self, from: data)
     else { return [:] }
     return decoded
   }
 
-  func saveColorCorrections(_ map: [String: ColorCorrection]) {
+  private func saveColorCorrections(_ map: [String: ColorCorrection]) {
+    colorCorrections = map
     if let data = try? JSONEncoder().encode(map) {
       UserDefaults.standard.set(data, forKey: colorProfilesKey)
     }
-    sync.applyColorCorrections(map)
+    sync.applyColorCorrections(colorCorrections)
   }
 
   private let disabledKey = "disabledMonitors"
@@ -108,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       NSApp.applicationIconImage = icon
     }
     profiles = loadProfiles()
+    colorCorrections = loadColorCorrections()
     disabledIDs = Set(UserDefaults.standard.stringArray(forKey: disabledKey) ?? [])
     hotkeyUp = loadCombo(hotkeyUpKey) ?? .defaultUp
     hotkeyDown = loadCombo(hotkeyDownKey) ?? .defaultDown
@@ -128,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       self.monitors = monitors
       self.controlWindowController?.updateMonitors(monitors)
       self.renderStatus()
-      self.sync.applyColorCorrections(self.loadColorCorrections())
+      self.sync.applyColorCorrections(self.colorCorrections)
     }
     sync.onExternalChangedExternally = { [weak self] _ in
       // The monitor's brightness moved outside the app (its own buttons): drop
@@ -141,7 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     sync.setAllowBlackout(allowBlackout)
     sync.setDisabled(disabledIDs)
     sync.setProfiles(profiles)
-    sync.applyColorCorrections(loadColorCorrections())
+    sync.applyColorCorrections(colorCorrections)
     sync.start()
 
     setupWakeObservers()
