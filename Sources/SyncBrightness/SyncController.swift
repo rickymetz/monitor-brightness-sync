@@ -55,6 +55,7 @@ final class SyncController {
       self.disabledIDs = ids
       for display in self.externals where newlyDisabled.contains(display.id) {
         self.gamma.set(display.cgDisplayID, factor: 1) // don't leave a disabled monitor dimmed
+        display.clearGammaFollow()
       }
       self.lastAppliedFraction = -1
       self.reportMonitors()
@@ -119,8 +120,8 @@ final class SyncController {
     pendingManual.removeAll()
     for (id, fraction) in pending {
       guard let display = externals.first(where: { $0.id == id }) else { continue }
-      gamma.set(display.cgDisplayID, factor: 1)
-      display.setBrightness(fraction: fraction)
+      // floor 0 → pure DDC, but still falls back to gamma if the write is refused.
+      setLevel(display, ddcFraction: fraction, dimInput: fraction, floor: 0)
     }
     reportMonitors()
   }
@@ -218,16 +219,29 @@ final class SyncController {
   /// Drive a display to `ddcFraction`, except when sub-floor dimming is on and
   /// `dimInput` is below `floor` — then hold DDC at minimum and dim further via
   /// gamma (clamped so it never blacks out). Shared by sync and clamshell modes.
+  /// If the DDC write is refused, fall back to following the built-in entirely
+  /// via software gamma so non-DDC displays still track brightness.
   private func setLevel(_ display: ExternalDisplay, ddcFraction: Double, dimInput: Double, floor: Double, ramp: Bool = false) {
-    if subFloorDimming, floor > 0, dimInput < floor {
+    let belowFloor = subFloorDimming && floor > 0 && dimInput < floor
+    let minGamma = allowBlackout ? 0.0 : minGammaFactor
+    let wroteOK = display.setBrightness(fraction: belowFloor ? 0 : ddcFraction, ramp: ramp)
+
+    if !wroteOK {
+      // DDC not accepted on this display — follow the built-in via gamma. This is
+      // the only way to dim a monitor that doesn't speak DDC, so trade backlight
+      // control for a software luminance scale.
+      let level = max(minGamma, dimInput)
+      gamma.set(display.cgDisplayID, factor: level)
+      display.markGammaFollow(level: level)
+      return
+    }
+    display.clearGammaFollow()
+    if belowFloor {
       // Below the floor, hold DDC at minimum and dim via gamma. Normally clamped
       // to a small visible floor; full blackout removes the clamp so it reaches 0.
-      let minGamma = allowBlackout ? 0.0 : minGammaFactor
-      display.setBrightness(fraction: 0, ramp: ramp)
       gamma.set(display.cgDisplayID, factor: max(minGamma, dimInput / floor))
     } else {
       gamma.set(display.cgDisplayID, factor: 1)
-      display.setBrightness(fraction: ddcFraction, ramp: ramp)
     }
   }
 
@@ -260,7 +274,7 @@ final class SyncController {
     let states = externals.map {
       MonitorState(id: $0.id, name: $0.name,
                    enabled: !disabledIDs.contains($0.id),
-                   healthy: $0.lastWriteOK,
+                   healthy: $0.lastWriteOK || $0.followsViaGamma, // gamma fallback still tracks
                    brightness: $0.currentFraction)
     }
     DispatchQueue.main.async { self.onMonitors?(states) }
