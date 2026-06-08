@@ -57,13 +57,27 @@ final class ExternalDisplay {
   }
 
   /// Probe the monitor for its reported brightness range. Best-effort; also
-  /// records whether the monitor answers reads at all.
+  /// records whether the monitor answers reads at all, and seeds our notion of
+  /// the current level from the monitor's actual brightness so relative key
+  /// adjustments (clamshell/external-only) move from the real value, not 0.
+  /// This runs only at scan/wake (not the hot sync loop), so it can retry hard.
   func refreshMaxBrightness() {
-    if let result = DDC.read(service: service, command: kVCPBrightness), result.max > 0 {
+    if let result = DDC.read(service: service, command: kVCPBrightness, retries: 4), result.max > 0 {
       maxBrightness = result.max
       readResponsive = true
+      if lastSetFraction == nil {
+        lastSetFraction = max(0.0, min(1.0, Double(result.current) / Double(result.max)))
+      }
     } else {
       readResponsive = false
+    }
+    // Second read path: if DDC wouldn't give us a starting level, ask
+    // DisplayServices (the same private API macOS uses) via the CG display id.
+    // Many monitors answer this even when raw DDC reads are flaky. Ignore a 0 —
+    // that's usually "couldn't read" rather than a genuine zero.
+    if lastSetFraction == nil, let cgID = cgDisplayID,
+       let fraction = BuiltinBrightness.fraction(of: cgID), fraction > 0 {
+      lastSetFraction = fraction
     }
   }
 
@@ -204,6 +218,38 @@ enum DDC {
     var chk = seed
     for i in start...end { chk ^= data[i] }
     return chk
+  }
+
+  // MARK: - Debug
+
+  /// Lists every display-related IORegistry entry with its Location, for
+  /// diagnosing detection (e.g. why nothing is found in clamshell).
+  static func debugServiceDump() -> [String] {
+    var lines: [String] = []
+    let root = IORegistryGetRootEntry(kIOMainPortDefault)
+    guard root != 0 else { return ["IORegistry root unavailable"] }
+    defer { IOObjectRelease(root) }
+    var iterator = io_iterator_t()
+    guard IORegistryEntryCreateIterator(root, "IOService", IOOptionBits(kIORegistryIterateRecursively), &iterator) == KERN_SUCCESS else {
+      return ["IORegistry iterator failed"]
+    }
+    defer { IOObjectRelease(iterator) }
+    let nameBuf = UnsafeMutablePointer<CChar>.allocate(capacity: MemoryLayout<io_name_t>.size)
+    defer { nameBuf.deallocate() }
+
+    while case let entry = IOIteratorNext(iterator), entry != IO_OBJECT_NULL {
+      defer { IOObjectRelease(entry) }
+      guard IORegistryEntryGetName(entry, nameBuf) == KERN_SUCCESS else { continue }
+      let name = String(cString: nameBuf)
+      if name == "DCPAVServiceProxy" {
+        let loc = stringProperty(of: entry, key: "Location") ?? "(none)"
+        let created = IOAVServiceCreateWithService(kCFAllocatorDefault, entry) != nil
+        lines.append("DCPAVServiceProxy  Location=\(loc)  IOAVService=\(created ? "yes" : "no")")
+      } else if name == "AppleCLCD2" || name == "IOMobileFramebufferShim" {
+        lines.append("Framebuffer \(name)  product=\(identity(of: entry)?.name ?? "?")")
+      }
+    }
+    return lines.isEmpty ? ["(no display services found)"] : lines
   }
 
   // MARK: - IORegistry property helpers

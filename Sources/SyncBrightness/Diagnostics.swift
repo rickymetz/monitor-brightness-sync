@@ -32,6 +32,14 @@ enum Diagnostics {
         out += "      DDC write probe (set ~50%): \(wrote ? "accepted (IOReturn OK)" : "FAILED")\n"
       }
     }
+
+    out += "\nIORegistry display services:\n"
+    for line in DDC.debugServiceDump() { out += "  \(line)\n" }
+
+    var onlineCount: UInt32 = 0
+    CGGetOnlineDisplayList(0, nil, &onlineCount)
+    out += "CG online displays: \(onlineCount)\n"
+
     FileHandle.standardError.write(out.data(using: .utf8)!)
   }
 }

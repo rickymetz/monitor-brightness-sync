@@ -22,7 +22,9 @@ enum BuiltinBrightness {
     return ids.first { CGDisplayIsBuiltin($0) != 0 }
   }
 
-  /// Current built-in brightness as a 0...1 fraction.
+  /// Current brightness of any display as a 0...1 fraction, via DisplayServices.
+  /// Works for the built-in and — on many setups — external displays too, which
+  /// is a useful second read path when raw DDC reads are flaky.
   static func fraction(of displayID: CGDirectDisplayID) -> Double? {
     guard let getBrightness else { return nil }
     var value: Float = 0
