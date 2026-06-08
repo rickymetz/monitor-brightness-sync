@@ -307,6 +307,17 @@ final class SyncController {
     }
   }
 
+  /// Apply per-display color corrections keyed by ExternalDisplay.id. Runs on the
+  /// serial queue; missing ids reset to identity. Safe after reconnect/wake.
+  func applyColorCorrections(_ map: [String: ColorCorrection]) {
+    queue.async {
+      for display in self.externals {
+        guard let cg = display.cgDisplayID else { continue }
+        self.gamma.setCorrection(cg, map[display.id] ?? .identity)
+      }
+    }
+  }
+
   private func reportMonitors() {
     let states = externals.map {
       MonitorState(id: $0.id, name: $0.name,

@@ -65,6 +65,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let profilesKey = "profiles"
   private var profiles: [String: BrightnessCurve] = [:]
 
+  private let colorProfilesKey = "colorCorrectionProfiles"
+
+  func loadColorCorrections() -> [String: ColorCorrection] {
+    guard let data = UserDefaults.standard.data(forKey: colorProfilesKey),
+          let decoded = try? JSONDecoder().decode([String: ColorCorrection].self, from: data)
+    else { return [:] }
+    return decoded
+  }
+
+  func saveColorCorrections(_ map: [String: ColorCorrection]) {
+    if let data = try? JSONEncoder().encode(map) {
+      UserDefaults.standard.set(data, forKey: colorProfilesKey)
+    }
+    sync.applyColorCorrections(map)
+  }
+
   private let disabledKey = "disabledMonitors"
   private var disabledIDs: Set<String> = []
 
@@ -112,6 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       self.monitors = monitors
       self.controlWindowController?.updateMonitors(monitors)
       self.renderStatus()
+      self.sync.applyColorCorrections(self.loadColorCorrections())
     }
     sync.onExternalChangedExternally = { [weak self] _ in
       // The monitor's brightness moved outside the app (its own buttons): drop
@@ -124,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     sync.setAllowBlackout(allowBlackout)
     sync.setDisabled(disabledIDs)
     sync.setProfiles(profiles)
+    sync.applyColorCorrections(loadColorCorrections())
     sync.start()
 
     setupWakeObservers()
