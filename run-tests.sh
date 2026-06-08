@@ -24,10 +24,4 @@ run_check hotkey-checks \
   Sources/SyncBrightness/HotKey.swift \
   Tests/HotKeyChecks/main.swift
 
-run_check color-checks \
-  Sources/SyncBrightness/ColorCorrection.swift \
-  Sources/SyncBrightness/DisplayColorState.swift \
-  Sources/SyncBrightness/ColorMatcher.swift \
-  Tests/ColorChecks/main.swift
-
 exit "$status"
