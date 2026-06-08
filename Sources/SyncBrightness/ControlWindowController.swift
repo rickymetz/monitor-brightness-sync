@@ -5,10 +5,12 @@ private final class FlippedView: NSView {
   override var isFlipped: Bool { true }
 }
 
-/// A System Settings–style control window: grouped rounded cards, rows with a
-/// label on the left and an NSSwitch/control on the right, section headers, and
-/// hairline separators. Mirrors the menu-bar controls for users who hide the icon.
-final class ControlWindowController: NSObject, NSWindowDelegate {
+/// A System Settings–style control window: a toolbar of tabs (Displays, Dimming,
+/// Shortcuts, General), each a pane of grouped rounded cards with label-left /
+/// control-right rows. The first tab holds the essentials you need on launch —
+/// live status, the Sync toggle, and your monitors. The menu bar keeps a synced
+/// quick subset of these controls.
+final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
   var onSetSync: (Bool) -> Void = { _ in }
   var onSetDimming: (Bool) -> Void = { _ in }
   var onSetBlackout: (Bool) -> Void = { _ in }
@@ -26,14 +28,14 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
   private(set) var window: NSWindow!
 
   // Layout metrics
-  private let winW: CGFloat = 400
+  private let winW: CGFloat = 420
   private let margin: CGFloat = 20
   private var cardW: CGFloat { winW - 2 * margin }
   private let rowH: CGFloat = 38
   private let toggleRowH: CGFloat = 50
   private let cardPad: CGFloat = 5
 
-  // Persistent controls (re-added on each rebuild, state preserved).
+  // Persistent controls (re-added when a tab is built, state preserved).
   private let statusLabel = NSTextField(labelWithString: "Starting…")
   private let syncSwitch = NSSwitch()
   private let dimmingSwitch = NSSwitch()
@@ -50,17 +52,41 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
   private var rowSliders: [NSSlider] = []
   private var rowLabels: [NSTextField] = []
 
+  private enum Tab: String, CaseIterable {
+    case displays, dimming, shortcuts, general
+    var title: String {
+      switch self {
+      case .displays: return "Displays"
+      case .dimming: return "Dimming"
+      case .shortcuts: return "Shortcuts"
+      case .general: return "General"
+      }
+    }
+    var symbol: String {
+      switch self {
+      case .displays: return "display"
+      case .dimming: return "circle.lefthalf.filled"
+      case .shortcuts: return "keyboard"
+      case .general: return "gearshape"
+      }
+    }
+  }
+  private var currentTab: Tab = .displays
+
   override init() {
     super.init()
-    window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: winW, height: 480),
-                      styleMask: [.titled, .closable, .miniaturizable],
-                      backing: .buffered, defer: false)
+    window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: winW, height: 300),
+                      styleMask: [.titled, .closable], backing: .buffered, defer: false)
     window.title = "Monitor Brightness Sync"
-    window.titleVisibility = .hidden
-    window.titlebarAppearsTransparent = true
-    window.isMovableByWindowBackground = true
     window.isReleasedWhenClosed = false
     window.delegate = self
+
+    let toolbar = NSToolbar(identifier: "controlTabs")
+    toolbar.delegate = self
+    toolbar.displayMode = .iconAndLabel
+    toolbar.allowsUserCustomization = false
+    window.toolbar = toolbar
+    window.toolbarStyle = .preference
 
     syncSwitch.target = self; syncSwitch.action = #selector(toggleSync)
     dimmingSwitch.target = self; dimmingSwitch.action = #selector(toggleDimming)
@@ -70,14 +96,17 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     hotkeysSwitch.target = self; hotkeysSwitch.action = #selector(toggleHotkeys)
     upRecorder.onCapture = { [weak self] combo in self?.onSetHotkeyUp(combo) }
     downRecorder.onCapture = { [weak self] combo in self?.onSetHotkeyDown(combo) }
-    rebuild()
+
+    selectTab(.displays, animate: false)
   }
 
   func show() {
     NSApp.activate(ignoringOtherApps: true)
-    window.center()
+    if !window.isVisible { window.center() }
     window.makeKeyAndOrderFront(nil)
   }
+
+  // MARK: - External state updates (persistent controls hold state across tabs)
 
   func update(statusText: String, syncOn: Bool) {
     statusLabel.stringValue = statusText
@@ -100,8 +129,10 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
   }
 
   func updateMonitors(_ monitors: [MonitorState]) {
-    if monitors.map(\.id) == rowIDs, rowSwitches.count == monitors.count {
-      self.monitors = monitors
+    let sameSet = monitors.map(\.id) == rowIDs && rowSwitches.count == monitors.count
+    self.monitors = monitors
+    if sameSet {
+      // In place — don't rebuild, so an in-progress slider drag isn't interrupted.
       for (i, m) in monitors.enumerated() {
         rowSwitches[i].state = m.enabled ? .on : .off
         rowLabels[i].stringValue = m.healthy ? m.name : "⚠ \(m.name)"
@@ -109,92 +140,157 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
       }
       return
     }
-    self.monitors = monitors
-    rebuild()
+    rowIDs = monitors.map(\.id)
+    if currentTab == .displays { setContent(displaysView(), animate: false) } // monitor set changed
   }
 
-  // MARK: - Layout
+  // MARK: - Tabs
 
-  private func rebuild() {
+  private func selectTab(_ tab: Tab, animate: Bool) {
+    currentTab = tab
+    window.toolbar?.selectedItemIdentifier = NSToolbarItem.Identifier(tab.rawValue)
+    let view: NSView
+    switch tab {
+    case .displays: view = displaysView()
+    case .dimming: view = dimmingView()
+    case .shortcuts: view = shortcutsView()
+    case .general: view = generalView()
+    }
+    setContent(view, animate: animate)
+  }
+
+  /// Install a pane, capping the window to the screen (scroll if a tall pane,
+  /// e.g. many monitors, would overflow) and resizing from the top edge.
+  private func setContent(_ view: NSView, animate: Bool) {
+    let maxH = ((window.screen ?? NSScreen.main)?.visibleFrame.height ?? 1000) - 140
+    let h = min(view.frame.height, maxH)
+
+    let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: winW, height: h))
+    scroll.drawsBackground = false
+    scroll.hasVerticalScroller = true
+    scroll.hasHorizontalScroller = false
+    scroll.autohidesScrollers = true
+    scroll.documentView = view
+    window.contentView = scroll
+
+    let target = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: winW, height: h))
+    var frame = window.frame
+    let top = frame.maxY
+    frame.size = target.size
+    frame.origin.y = top - target.height // keep the top edge fixed as it grows/shrinks
+    window.setFrame(frame, display: true, animate: animate)
+    view.scroll(NSPoint(x: 0, y: 0)) // flipped doc: show the top
+  }
+
+  // MARK: - Tab panes
+
+  private func displaysView() -> NSView {
     let content = FlippedView(frame: NSRect(x: 0, y: 0, width: winW, height: 10))
     var y: CGFloat = 18
 
-    // App header: icon + name + live status.
-    let icon = NSImageView(frame: NSRect(x: margin, y: y, width: 38, height: 38))
-    let cfg = NSImage.SymbolConfiguration(pointSize: 30, weight: .regular)
-    icon.image = NSImage(systemSymbolName: "sun.max.fill", accessibilityDescription: nil)?
-      .withSymbolConfiguration(cfg)
-    icon.contentTintColor = .systemYellow
-    icon.setAccessibilityElement(false) // decorative; the name label conveys it
-    content.addSubview(icon)
-    let name = NSTextField(labelWithString: "Monitor Brightness Sync")
-    name.font = .systemFont(ofSize: 15, weight: .semibold)
-    name.frame = NSRect(x: margin + 50, y: y + 1, width: cardW - 50, height: 20)
-    content.addSubview(name)
     statusLabel.font = .systemFont(ofSize: 12)
     statusLabel.textColor = .secondaryLabelColor
-    statusLabel.frame = NSRect(x: margin + 50, y: y + 21, width: cardW - 50, height: 16)
+    statusLabel.lineBreakMode = .byTruncatingTail
+    statusLabel.frame = NSRect(x: margin + 4, y: y, width: cardW - 8, height: 16)
     content.addSubview(statusLabel)
-    y += 38 + 18
+    y += 16 + 12
 
-    // Brightness sync card
-    y = sectionHeader(content, y, "Brightness")
+    y = sectionHeader(content, y, "Sync")
     y = toggleCard(content, y, [
       ("Sync external brightness", "Mirror the built-in display's brightness.", syncSwitch,
        "Mirror the built-in display's brightness onto your external monitors."),
+    ])
+
+    y = sectionHeader(content, y, "Monitors")
+    y = buildMonitorsCard(content, y)
+
+    y += 2
+    let calibrate = footerButton("Calibrate…", #selector(calibrate))
+    calibrate.frame = NSRect(x: margin, y: y, width: 150, height: 30)
+    content.addSubview(calibrate)
+    let reset = footerButton("Reset calibration", #selector(reset))
+    reset.frame = NSRect(x: margin + 158, y: y, width: 150, height: 30)
+    content.addSubview(reset)
+    y += 30 + 18
+
+    content.frame = NSRect(x: 0, y: 0, width: winW, height: y)
+    return content
+  }
+
+  private func dimmingView() -> NSView {
+    let content = FlippedView(frame: NSRect(x: 0, y: 0, width: winW, height: 10))
+    var y: CGFloat = 18
+    y = sectionHeader(content, y, "Dimming")
+    y = toggleCard(content, y, [
       ("Allow extra-dark dimming", "Dim below the monitor's hardware minimum.", dimmingSwitch,
        "Dim the external below its hardware minimum to match the Mac at low brightness."),
       ("Allow dimming all the way to black", "Reach true black at the lowest brightness.", blackoutSwitch,
        "Let the external reach true black at the lowest brightness, like the Mac display."),
     ])
     y = caption(content, y, "Extra-dark dimming uses the display's color table — it can interact with Night Shift, True Tone, or f.lux at very low brightness.")
+    content.frame = NSRect(x: 0, y: 0, width: winW, height: y)
+    return content
+  }
 
-    // Monitors card
-    y = sectionHeader(content, y, "Monitors")
-    y = buildMonitorsCard(content, y)
-
-    // General card
-    y = sectionHeader(content, y, "General")
+  private func shortcutsView() -> NSView {
+    let content = FlippedView(frame: NSRect(x: 0, y: 0, width: winW, height: 10))
+    var y: CGFloat = 18
+    y = sectionHeader(content, y, "Brightness keys")
     y = toggleCard(content, y, [
       ("Use brightness keys with lid closed", "Drive the external when the lid is closed.", keyControlSwitch,
        "When the lid is closed, the brightness keys adjust the external monitor (needs Accessibility permission)."),
+    ])
+    y = sectionHeader(content, y, "Custom shortcuts")
+    y = buildHotkeysCard(content, y)
+    content.frame = NSRect(x: 0, y: 0, width: winW, height: y)
+    return content
+  }
+
+  private func generalView() -> NSView {
+    let content = FlippedView(frame: NSRect(x: 0, y: 0, width: winW, height: 10))
+    var y: CGFloat = 18
+    y = sectionHeader(content, y, "General")
+    y = toggleCard(content, y, [
       ("Launch at login", "Open automatically when you log in.", loginSwitch,
        "Open Monitor Brightness Sync automatically when you log in."),
     ])
-
-    // Keyboard shortcuts card
-    y = sectionHeader(content, y, "Keyboard shortcuts")
-    y = buildHotkeysCard(content, y)
-
-    // Footer actions
-    y += 6
-    let calibrate = footerButton("Calibrate…", #selector(calibrate))
-    calibrate.frame = NSRect(x: margin, y: y, width: 150, height: 30)
-    content.addSubview(calibrate)
-    let reset = footerButton("Reset calibration", #selector(reset))
-    reset.frame = NSRect(x: margin + 158, y: y, width: 130, height: 30)
-    content.addSubview(reset)
-    let quit = footerButton("Quit", #selector(quit))
-    quit.frame = NSRect(x: winW - margin - 64, y: y, width: 64, height: 30)
+    y += 2
+    let quit = footerButton("Quit Monitor Brightness Sync", #selector(quit))
+    quit.frame = NSRect(x: margin, y: y, width: 240, height: 30)
     content.addSubview(quit)
     y += 30 + 18
-
     content.frame = NSRect(x: 0, y: 0, width: winW, height: y)
-
-    // Cap the window to the screen and scroll if the content is taller, so cards
-    // near the bottom (Keyboard shortcuts, footer) stay reachable on any display.
-    let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: winW, height: y))
-    scroll.drawsBackground = false
-    scroll.hasVerticalScroller = true
-    scroll.hasHorizontalScroller = false
-    scroll.autohidesScrollers = true
-    scroll.documentView = content
-    window.contentView = scroll
-
-    let maxH = ((window.screen ?? NSScreen.main)?.visibleFrame.height ?? 1000) - 40
-    window.setContentSize(NSSize(width: winW, height: min(y, maxH)))
-    content.scroll(NSPoint(x: 0, y: 0)) // flipped doc: show the top
+    return content
   }
+
+  // MARK: - NSToolbarDelegate
+
+  func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
+               willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+    guard let tab = Tab(rawValue: id.rawValue) else { return nil }
+    let item = NSToolbarItem(itemIdentifier: id)
+    item.label = tab.title
+    item.image = NSImage(systemSymbolName: tab.symbol, accessibilityDescription: tab.title)
+    item.target = self
+    item.action = #selector(tabClicked(_:))
+    return item
+  }
+
+  func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+    Tab.allCases.map { NSToolbarItem.Identifier($0.rawValue) }
+  }
+  func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+    toolbarDefaultItemIdentifiers(toolbar)
+  }
+  func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+    toolbarDefaultItemIdentifiers(toolbar)
+  }
+
+  @objc private func tabClicked(_ sender: NSToolbarItem) {
+    if let tab = Tab(rawValue: sender.itemIdentifier.rawValue) { selectTab(tab, animate: true) }
+  }
+
+  // MARK: - Cards
 
   private func buildMonitorsCard(_ content: NSView, _ y: CGFloat) -> CGFloat {
     rowIDs = monitors.map(\.id)
