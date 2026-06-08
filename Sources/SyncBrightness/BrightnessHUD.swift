@@ -39,6 +39,7 @@ final class BrightnessHUD {
     }
 
     position(window, on: screen)
+    OverlayMaterial.announce("\(name) brightness \(Int((clamped * 100).rounded())) percent")
 
     generation += 1
     let token = generation

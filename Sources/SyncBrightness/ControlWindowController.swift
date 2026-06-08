@@ -108,6 +108,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     icon.image = NSImage(systemSymbolName: "sun.max.fill", accessibilityDescription: nil)?
       .withSymbolConfiguration(cfg)
     icon.contentTintColor = .systemYellow
+    icon.setAccessibilityElement(false) // decorative; the name label conveys it
     content.addSubview(icon)
     let name = NSTextField(labelWithString: "Monitor Brightness Sync")
     name.font = .systemFont(ofSize: 15, weight: .semibold)
@@ -192,6 +193,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
       let sw = NSSwitch()
       sw.state = monitor.enabled ? .on : .off
       sw.tag = index
+      sw.setAccessibilityLabel("Sync \(monitor.name)")
       sw.target = self; sw.action = #selector(monitorEnableChanged(_:))
       let sz = sw.fittingSize
       sw.frame = NSRect(x: cardW - 16 - sz.width, y: top + (rowH - sz.height) / 2, width: sz.width, height: sz.height)
@@ -203,16 +205,19 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
       let dim = NSImageView(frame: NSRect(x: 16, y: sliderTop + 9, width: 14, height: 14))
       dim.image = NSImage(systemSymbolName: "sun.min", accessibilityDescription: nil)
       dim.contentTintColor = .tertiaryLabelColor
+      dim.setAccessibilityElement(false) // decorative
       card.addSubview(dim)
       let bright = NSImageView(frame: NSRect(x: cardW - 16 - 16, y: sliderTop + 8, width: 16, height: 16))
       bright.image = NSImage(systemSymbolName: "sun.max", accessibilityDescription: nil)
       bright.contentTintColor = .tertiaryLabelColor
+      bright.setAccessibilityElement(false) // decorative
       card.addSubview(bright)
 
       let slider = NSSlider(value: monitor.brightness * 100, minValue: 0, maxValue: 100,
                             target: self, action: #selector(monitorBrightnessChanged(_:)))
       slider.isContinuous = true
       slider.tag = index
+      slider.setAccessibilityLabel("\(monitor.name) brightness")
       slider.toolTip = "Set \(monitor.name)'s brightness manually."
       slider.frame = NSRect(x: 38, y: sliderTop + 7, width: cardW - 38 - 40, height: 20)
       card.addSubview(slider)
@@ -283,6 +288,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate {
     card.addSubview(sub)
 
     control.toolTip = tooltip
+    control.setAccessibilityLabel(title) // the title is a sibling label; bind it for VoiceOver
     control.frame = NSRect(x: cardW - 16 - size.width, y: top + (toggleRowH - size.height) / 2, width: size.width, height: size.height)
     card.addSubview(control)
   }

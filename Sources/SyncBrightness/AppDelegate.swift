@@ -497,6 +497,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     statusMenuItem.title = title
     let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
     statusItem.button?.attributedTitle = NSAttributedString(string: badge, attributes: [.font: font])
+    statusItem.button?.setAccessibilityLabel("Monitor Brightness Sync — \(title)") // VoiceOver reads status, not the badge glyphs
     controlWindowController?.update(statusText: title, syncOn: isEnabled)
   }
 }
