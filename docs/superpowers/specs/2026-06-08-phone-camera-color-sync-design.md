@@ -1,3 +1,8 @@
+> **⚠️ SUPERSEDED (2026-06-08)** by `2026-06-08-native-color-sync-design.md`.
+> The web-page approach was proven mathematically unable to recover display white
+> point (each photo has a different uncontrolled camera gain). Replaced by a native
+> iOS app that locks WB/exposure. Kept for history.
+
 # Phone-Camera Color Sync — Design
 
 **Date:** 2026-06-08

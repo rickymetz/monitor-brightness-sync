@@ -1,3 +1,8 @@
+> **⚠️ SUPERSEDED (2026-06-08).** Tasks 1–2 (value types, `DisplayColorState`) were
+> completed and are reused. Task 3 onward (web server, HTML page, within-photo matcher)
+> is abandoned — see `../specs/2026-06-08-native-color-sync-design.md`. A new plan will
+> be written for the native iOS architecture.
+
 # Phone-Camera Color Sync Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
