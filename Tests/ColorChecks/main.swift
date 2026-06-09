@@ -201,5 +201,30 @@ do {
   check(PairingPayload.parse("mbsync://pair?h=x&p=notanumber&k=y") == nil, "rejects bad port")
 }
 
+// ---- FrameCodec ----
+do {
+  let body = Data("hello".utf8)
+  let framed = FrameCodec.encode(body)
+  check(framed.count == 4 + 5, "frame = 4-byte header + body")
+  check(framed[0] == 0 && framed[1] == 0 && framed[2] == 0 && framed[3] == 5, "UInt32 BE length")
+
+  var dec = FrameDecoder()
+  var out: [Data] = []
+  out += dec.push(framed[0..<3])
+  out += dec.push(framed[3..<7])
+  out += dec.push(framed[7...])
+  check(out.count == 1 && out[0] == body, "reassembles one body across chunks")
+
+  var dec2 = FrameDecoder()
+  let two = FrameCodec.encode(Data("a".utf8)) + FrameCodec.encode(Data("bb".utf8))
+  let got = dec2.push(two)
+  check(got.count == 2 && got[0] == Data("a".utf8) && got[1] == Data("bb".utf8), "two frames in one buffer")
+
+  var dec3 = FrameDecoder()
+  var big = Data([255, 255, 255, 255])
+  big.append(Data("x".utf8))
+  check(dec3.push(big).isEmpty && dec3.failed, "oversize frame flags failure")
+}
+
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) FAILED.")
 exit(failures == 0 ? 0 : 1)
