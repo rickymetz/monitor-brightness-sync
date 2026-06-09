@@ -17,7 +17,7 @@ final class SyncController {
   private let queue = DispatchQueue(label: "com.rick.syncbrightness.sync")
   private let pollInterval: TimeInterval = 0.15
   private let threshold = 0.004
-  private let gamma = GammaDimmer()
+  private let gamma = DisplayColorState()
 
   private var timer: DispatchSourceTimer?
   private var externals: [ExternalDisplay] = []
@@ -307,6 +307,17 @@ final class SyncController {
     }
   }
 
+  /// Apply per-display color corrections keyed by ExternalDisplay.id. Runs on the
+  /// serial queue; missing ids reset to identity. Safe after reconnect/wake.
+  func applyColorCorrections(_ map: [String: ColorCorrection]) {
+    queue.async {
+      for display in self.externals {
+        guard let cg = display.cgDisplayID else { continue }
+        self.gamma.setCorrection(cg, map[display.id] ?? .identity)
+      }
+    }
+  }
+
   private func reportMonitors() {
     let states = externals.map {
       MonitorState(id: $0.id, name: $0.name,
@@ -315,6 +326,11 @@ final class SyncController {
                    brightness: $0.currentFraction)
     }
     DispatchQueue.main.async { self.onMonitors?(states) }
+  }
+
+  /// Thread-safe snapshot of current externals for UI (id, cgDisplayID, name).
+  func snapshotExternals() -> [(id: String, cg: CGDirectDisplayID?, name: String)] {
+    queue.sync { externals.map { ($0.id, $0.cgDisplayID, $0.name) } }
   }
 
   private func registerReconfigurationCallback() {

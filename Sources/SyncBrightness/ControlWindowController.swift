@@ -18,6 +18,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
   var onSetKeyControl: (Bool) -> Void = { _ in }
   var onCalibrate: () -> Void = {}
   var onReset: () -> Void = {}
+  var onColorSync: () -> Void = {}
   var onClose: () -> Void = {}
   var onSetMonitorEnabled: (String, Bool) -> Void = { _, _ in }
   var onSetMonitorBrightness: (String, Double) -> Void = { _, _ in }
@@ -255,6 +256,10 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
        "Open Monitor Brightness Sync automatically when you log in."),
     ])
     y += 2
+    let colorSyncButton = footerButton("Color Sync (beta)…", #selector(colorSync))
+    colorSyncButton.frame = NSRect(x: margin, y: y, width: 180, height: 30)
+    content.addSubview(colorSyncButton)
+    y += 30 + 10
     let quit = footerButton("Quit Monitor Brightness Sync", #selector(quit))
     quit.frame = NSRect(x: margin, y: y, width: 240, height: 30)
     content.addSubview(quit)
@@ -509,6 +514,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
   @objc private func toggleHotkeys() { onSetHotkeysEnabled(hotkeysSwitch.state == .on) }
   @objc private func calibrate() { onCalibrate() }
   @objc private func reset() { onReset() }
+  @objc private func colorSync() { onColorSync() }
   @objc private func quit() { NSApp.terminate(nil) }
 
   @objc private func monitorEnableChanged(_ sender: NSSwitch) {

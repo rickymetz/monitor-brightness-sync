@@ -15,6 +15,7 @@ A macOS menu-bar agent that mirrors the **built-in display's brightness onto ext
 - **Custom global hotkeys** — optional, user-recordable shortcuts that replace the brightness keys (handy on a keyboard without them).
 - **Reconcile** — notices when you change brightness on the monitor's own buttons and keeps the app's state honest.
 - **Accessibility** — VoiceOver labels throughout, plus spoken brightness/hint announcements.
+- **Color Sync (beta)** — pairs with a native iOS companion app (TestFlight, built separately) over LAN/TLS-PSK; the iPhone photographs a patch card on each display with locked white-balance, and the Mac computes a per-display white-point correction applied via the gamma table, so external panels match the built-in's color temperature. Before/after toggle and warm/cool fine-tune sliders are included; corrections persist per display and re-apply on wake/reconnect.
 - **Niceties** — first-run onboarding, launch at login, and a tabbed settings window; lives quietly in the menu bar (no window pop on login).
 
 ## Requirements
@@ -140,6 +141,10 @@ There are two: the **menu-bar dropdown** (a quick, always-synced subset of toggl
 - **Accessibility permission** is required for "Use brightness keys with lid closed" (the event tap), and it only *persists* with a stable signing identity (see [Code signing & permissions](#code-signing--permissions)). Custom global hotkeys don't need it.
 - **Be gentle with DDC.** Some monitors (e.g. those that fail DDC *reads*) have flaky controllers; flooding them with traffic can wedge the link. Writes are single-cycle, low-retry, and coalesced, and reconcile reads are infrequent — keep it that way.
 - **Software dimming and Night Shift.** Sub-floor dimming and the non-DDC fallback both adjust the display's gamma/color table, so they can interact with Night Shift, True Tone, or f.lux at very low brightness. Dimming is clamped to a small visible floor by default ("Allow dimming all the way to black" removes the clamp); gamma is restored on quit, and `CGDisplayRestoreColorSyncSettings()` runs on launch to self-heal a force-killed run.
+- **Color Sync shares the gamma table.** White-point correction, sub-floor dimming, and the non-DDC gamma-follow all write the same per-display gamma table; they compose, but if you stack all three the interaction at extreme settings is not fully characterized.
+- **Color Sync corrects chroma, not brightness.** It matches each display's white point to the reference (built-in when present); overall brightness stays owned by the existing brightness-sync feature.
+- **Color Sync requires the iOS companion app.** The companion lives under `ios/` and is distributed via TestFlight (not the App Store). Mac and iPhone must be on the same Wi-Fi/LAN with no client isolation (AP isolation must be off).
+- **Color Sync white-point matching is reliable; full gamut profiling is not.** Locking the native camera's white balance and exposure makes the white-point measurement trustworthy (a browser/WebRTC camera cannot do this). Per-channel gamut characterization beyond the white point is not attempted.
 
 ## Reference
 
