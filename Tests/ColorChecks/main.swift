@@ -226,5 +226,20 @@ do {
   check(dec3.push(big).isEmpty && dec3.failed, "oversize frame flags failure")
 }
 
+// ---- CaptureGate ----
+do {
+  var gate = CaptureGate(needed: 3)
+  check(gate.record(found: true) == false, "1 hit: not yet")
+  check(gate.record(found: true) == false, "2 hits: not yet")
+  check(gate.record(found: true) == true, "3 hits: fire")
+  var g2 = CaptureGate(needed: 3)
+  _ = g2.record(found: true); _ = g2.record(found: true)
+  check(g2.record(found: false) == false, "miss resets")
+  check(g2.record(found: true) == false, "streak restarts after miss")
+  var g3 = CaptureGate(needed: 2)
+  _ = g3.record(found: true); g3.reset()
+  check(g3.record(found: true) == false, "reset clears streak")
+}
+
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) FAILED.")
 exit(failures == 0 ? 0 : 1)
