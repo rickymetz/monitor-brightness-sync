@@ -15,7 +15,7 @@ A macOS menu-bar agent that mirrors the **built-in display's brightness onto ext
 - **Custom global hotkeys** — optional, user-recordable shortcuts that replace the brightness keys (handy on a keyboard without them).
 - **Reconcile** — notices when you change brightness on the monitor's own buttons and keeps the app's state honest.
 - **Accessibility** — VoiceOver labels throughout, plus spoken brightness/hint announcements.
-- **Color Sync (beta)** — pairs with a native iOS companion app (TestFlight, built separately) over LAN/TLS-PSK; the iPhone photographs a patch card on each display with locked white-balance, and the Mac computes a per-display white-point correction applied via the gamma table, so external panels match the built-in's color temperature. Before/after toggle and warm/cool fine-tune sliders are included; corrections persist per display and re-apply on wake/reconnect.
+- **Color Sync (beta)** — pairs with a native iOS companion app over LAN/TLS-PSK; the iPhone photographs a patch card on each display with locked white-balance, and the Mac computes a per-display white-point correction applied via the gamma table, so external panels match the built-in's color temperature. Before/after toggle and warm/cool fine-tune sliders are included; corrections persist per display and re-apply on wake/reconnect. The companion lives in [`ios/`](ios/) (built with xcodegen, distributed via TestFlight) — see [`ios/README.md`](ios/README.md) for build, signing, and device bring-up instructions.
 - **Niceties** — first-run onboarding, launch at login, and a tabbed settings window; lives quietly in the menu bar (no window pop on login).
 
 ## Requirements
