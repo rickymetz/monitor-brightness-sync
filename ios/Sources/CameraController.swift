@@ -29,6 +29,14 @@ final class CameraController: NSObject, ObservableObject {
     videoOutput.setSampleBufferDelegate(self, queue: sampleQueue)
     if session.canAddOutput(videoOutput) { session.addOutput(videoOutput) }
     session.commitConfiguration()
+    // Pin orientation to portrait so the analyzer's white-fiducial quadrant assumption holds.
+    if let conn = videoOutput.connection(with: .video) {
+      if #available(iOS 17.0, *) {
+        if conn.isVideoRotationAngleSupported(90) { conn.videoRotationAngle = 90 }
+      } else if conn.isVideoOrientationSupported {
+        conn.videoOrientation = .portrait
+      }
+    }
     DispatchQueue.global(qos: .userInitiated).async { [session] in session.startRunning() }
   }
 
@@ -38,8 +46,13 @@ final class CameraController: NSObject, ObservableObject {
   func lock() {
     guard let device else { return }
     try? device.lockForConfiguration()
-    if device.isWhiteBalanceModeSupported(.locked) { device.whiteBalanceMode = .locked }
     if device.isExposureModeSupported(.locked) { device.exposureMode = .locked }
+    // White balance: prefer .locked mode; else pin current device gains explicitly.
+    if device.isWhiteBalanceModeSupported(.locked) {
+      device.whiteBalanceMode = .locked
+    } else if device.isLockingWhiteBalanceWithCustomDeviceGainsSupported {
+      device.setWhiteBalanceModeLocked(with: device.deviceWhiteBalanceGains, completionHandler: nil)
+    }
     if device.isFocusModeSupported(.locked) { device.focusMode = .locked }
     device.unlockForConfiguration()
   }

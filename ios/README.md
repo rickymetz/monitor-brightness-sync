@@ -73,3 +73,10 @@ The iOS target does **not** have a separate Swift package. It compiles the follo
 - `CaptureGate` — steady-frame gating
 
 The iOS-specific code lives in `ios/Sources/` (SwiftUI views, `CameraController`, `ColorSyncClient`, `SessionCoordinator`).
+
+## Known device risks
+
+These only manifest on a real device (the camera doesn't run in the simulator), so verify them during device bring-up:
+
+- **Confirm white balance lock actually engages.** `CameraController.lock()` prefers `.locked` WB mode; if your iPhone's camera doesn't support locked WB it falls back to pinning the current custom device gains (`setWhiteBalanceModeLocked(with:)`). Either way, verify colors stop drifting between displays after **Lock & Start** — if the patches shift hue as you pan between displays, the lock isn't holding.
+- **Hold the phone upright (portrait) when capturing.** The video connection is pinned to portrait, and the patch-card analyzer expects a roughly portrait, axis-aligned framing (its white-fiducial quadrant assumption depends on it). Tilted or landscape framing can cause the analyzer to miss the card.
