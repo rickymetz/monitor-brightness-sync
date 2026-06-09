@@ -5,6 +5,7 @@ struct MBSyncApp: App {
   @StateObject private var client: ColorSyncClient
   @StateObject private var camera: CameraController
   @StateObject private var coordinator: SessionCoordinator
+  @State private var showDebug = false
 
   init() {
     let c = ColorSyncClient()
@@ -17,10 +18,14 @@ struct MBSyncApp: App {
   var body: some Scene {
     WindowGroup {
       Group {
-        switch coordinator.phase {
-        case .pairing: PairingView(client: client)
-        case .awaitingLock, .capturing: CaptureView(coordinator: coordinator)
-        case .done: DoneView()
+        if showDebug {
+          SideBySideView(camera: camera, client: client, onClose: { showDebug = false })
+        } else {
+          switch coordinator.phase {
+          case .pairing: PairingView(client: client, onDebug: { showDebug = true })
+          case .awaitingLock, .capturing: CaptureView(coordinator: coordinator)
+          case .done: DoneView(onVerify: { showDebug = true })
+          }
         }
       }
       // Launched/foregrounded via the system Camera scanning an mbsync:// QR.

@@ -22,6 +22,8 @@ enum PhoneToMac: Equatable, Codable {
   case beginRamp(displayID: String)                 // user tapped Capture; start the ramp
   case measured(level: Int, r: Double, g: Double, b: Double)
   case samples(displayID: String, samples: PatchSamples)  // legacy single-field path
+  case beginVerify                                         // phone opened side-by-side; show test field
+  case sideBySide(aR: Double, aG: Double, aB: Double, bR: Double, bG: Double, bB: Double)
   case error(reason: String)
 }
 

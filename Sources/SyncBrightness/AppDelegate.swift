@@ -76,9 +76,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     set { UserDefaults.standard.set(newValue, forKey: colorSyncEnabledKey) }
   }
 
-  /// What's actually applied: the saved corrections, or identity when disabled.
+  private let matchGammaKey = "colorSyncMatchGamma"
+  /// Apply the per-display gamma term. Off by default — it can wash out mid-tones;
+  /// white-point matching is the dependable part.
+  private var matchGamma: Bool {
+    get { UserDefaults.standard.bool(forKey: matchGammaKey) }   // default false
+    set { UserDefaults.standard.set(newValue, forKey: matchGammaKey) }
+  }
+
+  /// What's actually applied: nothing when disabled; otherwise the saved
+  /// corrections, with the gamma term stripped unless gamma matching is on.
   private var effectiveColorCorrections: [String: ColorCorrection] {
-    colorSyncEnabled ? colorCorrections : [:]
+    guard colorSyncEnabled else { return [:] }
+    if matchGamma { return colorCorrections }
+    return colorCorrections.mapValues {
+      ColorCorrection(redGain: $0.redGain, greenGain: $0.greenGain, blueGain: $0.blueGain, gamma: 1)
+    }
+  }
+
+  private func setMatchGamma(_ on: Bool) {
+    matchGamma = on
+    sync.applyColorCorrections(effectiveColorCorrections)
   }
 
   private func loadColorCorrections() -> [String: ColorCorrection] {
@@ -95,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     colorSyncEnabled = true   // a fresh save implies "apply it"
     sync.applyColorCorrections(effectiveColorCorrections)
+    controlWindowController?.setColorSyncSummary(colorSyncSummaryText())
   }
 
   /// Live toggle: apply the saved correction or revert to identity (for A/B).
@@ -108,8 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     colorCorrections = [:]
     UserDefaults.standard.removeObject(forKey: colorProfilesKey)
     sync.applyColorCorrections([:])
-    controlWindowController?.colorSyncSummary = colorSyncSummaryText()
-    controlWindowController?.colorSyncEnabled = colorSyncEnabled
+    controlWindowController?.setColorSyncSummary(colorSyncSummaryText())
   }
 
   /// Human-readable summary of the saved correction, for the settings window.
@@ -432,7 +450,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       controller.onReset = { [weak self] in self?.resetCalibration() }
       controller.onColorSync = { [weak self] in self?.openColorSync() }
       controller.onSetColorSyncEnabled = { [weak self] on in self?.setColorSyncEnabled(on) }
+      controller.onSetMatchGamma = { [weak self] on in self?.setMatchGamma(on) }
       controller.onResetColorSync = { [weak self] in self?.resetColorSync() }
+      controller.onToggleTestField = { [weak self] in self?.toggleTestField() }
       controller.onSetMonitorEnabled = { [weak self] id, enabled in self?.setMonitorEnabled(id, enabled) }
       controller.onSetMonitorBrightness = { [weak self] id, fraction in self?.sync.setManual(id: id, fraction: fraction) }
       controller.onSetHotkeysEnabled = { [weak self] on in self?.setHotkeysEnabled(on) }
@@ -447,6 +467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     controlVisible = true
     updateActivationPolicy()
     controlWindowController?.colorSyncEnabled = colorSyncEnabled
+    controlWindowController?.matchGamma = matchGamma
     controlWindowController?.colorSyncSummary = colorSyncSummaryText()
     controlWindowController?.updateMonitors(monitors)
     controlWindowController?.show()
@@ -528,9 +549,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     wc.displays = buildColorSyncDisplayList()
     wc.onPreview = { [weak self] map in self?.sync.applyColorCorrections(map) }  // apply live, do NOT persist
     wc.onSave = { [weak self] map in self?.saveColorCorrections(map) }           // persist + apply
+    wc.onShowTestField = { [weak self] in self?.showTestField() }
+    wc.onHideTestField = { [weak self] in self?.hideTestField() }
     wc.onClose = { [weak self] in
       guard let self else { return }
       self.colorSyncWC = nil
+      self.hideTestField()
       // Restore brightness + resume sync, and revert displays to the saved state
       // (discarding any unsaved preview).
       self.sync.endFixedBrightness()
@@ -545,6 +569,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     sync.beginFixedBrightness(0.5)
     wc.begin()
     colorSyncWC = wc
+  }
+
+  // MARK: - Side-by-side test field (debug)
+
+  private var testFieldWindows: [NSWindow] = []
+
+  /// Toggle a uniform mid-gray field on every display, so the iOS side-by-side
+  /// check has a clean target. The displayed field passes through the gamma
+  /// correction, so toggling "Apply color sync correction" lets you A/B it.
+  /// Dismiss by clicking anywhere on it or pressing Escape (it covers the
+  /// Settings window, so the toggle button isn't reachable while it's up).
+  private func toggleTestField() {
+    if testFieldWindows.isEmpty { showTestField() } else { hideTestField() }
+  }
+
+  private func showTestField() {
+    guard testFieldWindows.isEmpty else { return }   // already showing
+    for (i, screen) in NSScreen.screens.enumerated() {
+      let w = TestFieldWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+      w.level = .screenSaver
+      w.isOpaque = true
+      w.onDismiss = { [weak self] in self?.hideTestField() }
+      let view = TestFieldView(frame: NSRect(origin: .zero, size: screen.frame.size))
+      view.label = String(UnicodeScalar(UInt8(65 + min(i, 25))))   // A, B, C…
+      view.onDismiss = { [weak self] in self?.hideTestField() }
+      w.contentView = view
+      w.setFrame(screen.frame, display: true)
+      w.makeKeyAndOrderFront(nil)
+      testFieldWindows.append(w)
+    }
+    NSApp.activate(ignoringOtherApps: true)   // so Escape reaches the key window
+  }
+
+  private func hideTestField() {
+    testFieldWindows.forEach { $0.orderOut(nil) }
+    testFieldWindows.removeAll()
   }
 
   /// Built-in first (reference), then externals; pair each NSScreen to a display id.
@@ -728,5 +788,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     statusItem.button?.attributedTitle = NSAttributedString(string: badge, attributes: [.font: font])
     statusItem.button?.setAccessibilityLabel("Monitor Brightness Sync — \(title)") // VoiceOver reads status, not the badge glyphs
     controlWindowController?.update(statusText: title, syncOn: isEnabled)
+  }
+}
+
+/// Fullscreen test-field window that dismisses on Escape (it can become key so it
+/// receives the keystroke).
+private final class TestFieldWindow: NSWindow {
+  var onDismiss: (() -> Void)?
+  override var canBecomeKey: Bool { true }
+  override func cancelOperation(_ sender: Any?) { onDismiss?() }   // Escape
+}
+
+/// Mid-gray fill with a corner label (A/B/…) that dismisses on a click anywhere.
+/// The label sits in the corners so the center stays a clean field to sample.
+private final class TestFieldView: NSView {
+  var onDismiss: (() -> Void)?
+  var label = ""
+  override var acceptsFirstResponder: Bool { true }
+  override func mouseDown(with event: NSEvent) { onDismiss?() }
+
+  override func draw(_ dirtyRect: NSRect) {
+    NSColor(white: 0.5, alpha: 1).setFill(); bounds.fill()
+    guard !label.isEmpty else { return }
+    let attrs: [NSAttributedString.Key: Any] = [
+      .font: NSFont.boldSystemFont(ofSize: 120),
+      .foregroundColor: NSColor(white: 0.25, alpha: 1),
+    ]
+    let s = label as NSString
+    let size = s.size(withAttributes: attrs)
+    let inset: CGFloat = 60
+    // Draw in all four corners so it's visible however the phone is angled.
+    for p in [NSPoint(x: inset, y: inset),
+              NSPoint(x: bounds.maxX - size.width - inset, y: inset),
+              NSPoint(x: inset, y: bounds.maxY - size.height - inset),
+              NSPoint(x: bounds.maxX - size.width - inset, y: bounds.maxY - size.height - inset)] {
+      s.draw(at: p, withAttributes: attrs)
+    }
   }
 }

@@ -17,6 +17,8 @@ final class CameraController: NSObject, ObservableObject {
 
   /// Called on the MAIN queue for each analyzed frame with the measured field.
   var onFrame: ((FieldMeasure) -> Void)?
+  /// Latest frame as a CGImage (main queue) — used by the side-by-side debug check.
+  @Published var lastImage: CGImage?
 
   func start() {
     guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
@@ -56,6 +58,17 @@ final class CameraController: NSObject, ObservableObject {
     if device.isFocusModeSupported(.locked) { device.focusMode = .locked }
     device.unlockForConfiguration()
   }
+
+  /// Re-enable continuous autofocus (for the side-by-side check, where a sharp
+  /// image matters for tapping each screen). Safe there: it's a single frame, so
+  /// any camera transform hits both screens identically and cancels in the A↔B
+  /// comparison. Leaves WB/exposure as they are.
+  func enableAutofocus() {
+    guard let device else { return }
+    try? device.lockForConfiguration()
+    if device.isFocusModeSupported(.continuousAutoFocus) { device.focusMode = .continuousAutoFocus }
+    device.unlockForConfiguration()
+  }
 }
 
 extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
@@ -71,6 +84,6 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
     // With the camera locked, the average of a fullscreen neutral field IS the
     // display's chroma at that level. The Mac drives which level is shown.
     let field = FieldSampler.measure(image: cg)
-    DispatchQueue.main.async { self.onFrame?(field) }
+    DispatchQueue.main.async { self.onFrame?(field); self.lastImage = cg }
   }
 }

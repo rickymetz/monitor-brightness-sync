@@ -9,6 +9,10 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
   var onSave: (([String: ColorCorrection]) -> Void)?
   /// Fired when the window closes so the owner can drop its reference (re-entrancy).
   var onClose: (() -> Void)?
+  /// Show / hide the uniform test field (with A/B labels) on every display, for
+  /// the side-by-side verify.
+  var onShowTestField: (() -> Void)?
+  var onHideTestField: (() -> Void)?
   private var didTearDown = false
 
   private let transport = ColorSyncTransport()
@@ -88,9 +92,24 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
       rampReadings.append(RGB(r: r, g: g, b: b))
       levelIndex += 1
       if levelIndex < rampLevels.count { showLevelThenMeasure() } else { finishDisplay() }
+    case .beginVerify:
+      onShowTestField?()
+    case .sideBySide(let aR, let aG, let aB, let bR, let bG, let bB):
+      onHideTestField?()
+      reportSideBySide(a: RGB(r: aR, g: aG, b: aB), b: RGB(r: bR, g: bG, b: bB))
     default:
       break
     }
+  }
+
+  /// Verdict on a side-by-side debug capture. Judges CHROMA (luminance-normalized)
+  /// — what color sync actually corrects — and reports the brightness difference
+  /// separately (that's the brightness-sync feature's job, not color sync's).
+  private func reportSideBySide(a: RGB, b: RGB) {
+    let m = SideBySideMetric.compare(a, b)
+    statusLabel.stringValue = String(
+      format: "Side-by-side check:\nA (%.3f, %.3f, %.3f)  B (%.3f, %.3f, %.3f)\nColor Δ %.3f — %@\nBrightness differs %.3f (brightness sync's job, not color)",
+      a.r, a.g, a.b, b.r, b.g, b.b, m.chroma, m.verdict, m.brightness)
   }
 
   private var currentDisplayID: String? {
@@ -155,6 +174,9 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
       }
     }
     statusLabel.stringValue = lines.joined(separator: "\n")
+    // Set up the side-by-side check automatically: show the A/B test field on every
+    // display. Tap "Verify side-by-side" on the phone; the result hides it again.
+    onShowTestField?()
   }
 
   private func presentFineTune() {

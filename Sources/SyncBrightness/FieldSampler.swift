@@ -45,6 +45,24 @@ enum FieldSampler {
   }
 }
 
+extension FieldSampler {
+  /// Average color in a square around a normalized point (origin top-left, 0...1).
+  /// Used by the side-by-side debug check (tap a screen in a photo, sample it).
+  static func average(image: CGImage, atNormalized p: CGPoint, radiusFraction: Double = 0.04) -> RGB {
+    guard let px = FieldPixels(image), px.w > 0, px.h > 0 else { return RGB(r: 0, g: 0, b: 0) }
+    let cx = Int(max(0, min(1, p.x)) * Double(px.w))
+    let cy = Int(max(0, min(1, p.y)) * Double(px.h))
+    let rad = max(2, Int(Double(min(px.w, px.h)) * radiusFraction))
+    var sr = 0.0, sg = 0.0, sb = 0.0, n = 0.0
+    for y in max(0, cy - rad)...min(px.h - 1, cy + rad) {
+      for x in max(0, cx - rad)...min(px.w - 1, cx + rad) {
+        let c = px.rgb(x, y); sr += c.r; sg += c.g; sb += c.b; n += 1
+      }
+    }
+    return n > 0 ? RGB(r: sr / n, g: sg / n, b: sb / n) : RGB(r: 0, g: 0, b: 0)
+  }
+}
+
 private struct FieldPixels {
   let w: Int, h: Int, data: [UInt8]
   init?(_ image: CGImage) {

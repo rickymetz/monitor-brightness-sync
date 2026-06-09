@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PairingView: View {
   @ObservedObject var client: ColorSyncClient
+  var onDebug: () -> Void = {}
   @State private var error: String?
 
   var body: some View {
@@ -17,6 +18,8 @@ struct PairingView: View {
       .frame(height: 320)
       .clipShape(RoundedRectangle(cornerRadius: 16))
       if let error { Text(error).foregroundStyle(.red).font(.footnote) }
+      Button("Side-by-side check (debug)", action: onDebug)
+        .font(.footnote)
     }
     .padding()
   }

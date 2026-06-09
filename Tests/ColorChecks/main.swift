@@ -287,6 +287,29 @@ do {
   check(FieldSampler.measure(image: ctx2.makeImage()!).uniformBright == false, "split field is not uniform")
   // a dark field is not bright enough
   check(FieldSampler.measure(image: solid(0.05, 0.05, 0.05)).uniformBright == false, "dark field not uniformBright")
+
+  // point sampling: left half red, right half blue
+  let split = CGContext(data: nil, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: 0,
+                        space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+  split.setFillColor(red: 1, green: 0, blue: 0, alpha: 1); split.fill(CGRect(x: 0, y: 0, width: 50, height: 100))
+  split.setFillColor(red: 0, green: 0, blue: 1, alpha: 1); split.fill(CGRect(x: 50, y: 0, width: 50, height: 100))
+  let img3 = split.makeImage()!
+  let left = FieldSampler.average(image: img3, atNormalized: CGPoint(x: 0.25, y: 0.5))
+  let right = FieldSampler.average(image: img3, atNormalized: CGPoint(x: 0.75, y: 0.5))
+  check(left.r > 0.8 && right.b > 0.8, "point sampling reads each half")
+}
+
+// ---- SideBySideMetric ----
+do {
+  // pure brightness difference (B uniformly brighter) → chroma ~0, brightness > 0
+  let m = SideBySideMetric.compare(RGB(r: 0.5, g: 0.5, b: 0.5), RGB(r: 0.6, g: 0.6, b: 0.6))
+  check(approx(m.chroma, 0, 0.001), "uniform brightness diff -> chroma ~0")
+  check(m.brightness > 0.09, "brightness difference captured")
+  check(m.verdict.contains("matched"), "matched verdict when chroma is ~0")
+  // a real colour difference -> large chroma, not matched
+  let m2 = SideBySideMetric.compare(RGB(r: 0.6, g: 0.5, b: 0.4), RGB(r: 0.4, g: 0.5, b: 0.6))
+  check(m2.chroma > 0.1, "color difference -> chroma large")
+  check(!m2.verdict.contains("matched"), "not matched on a color difference")
 }
 
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) FAILED.")
