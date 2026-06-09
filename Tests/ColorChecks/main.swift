@@ -186,5 +186,20 @@ do {
   check(approx(dim.redGain, 0.5) && approx(dim.blueGain, 0.5), "brightness scales gains")
 }
 
+// ---- PairingPayload ----
+do {
+  let built = PairingPayload.build(host: "192.168.1.50", port: 50210, psk: "ab+/c=Z9")
+  check(built.hasPrefix("mbsync://pair?"), "payload uses scheme")
+  if let p = PairingPayload.parse(built) {
+    check(p.host == "192.168.1.50", "host round-trips")
+    check(p.port == 50210, "port round-trips")
+    check(p.psk == "ab+/c=Z9", "psk round-trips (base64 chars survive)")
+  } else {
+    check(false, "parse round-trips")
+  }
+  check(PairingPayload.parse("https://example.com") == nil, "rejects wrong scheme")
+  check(PairingPayload.parse("mbsync://pair?h=x&p=notanumber&k=y") == nil, "rejects bad port")
+}
+
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) FAILED.")
 exit(failures == 0 ? 0 : 1)

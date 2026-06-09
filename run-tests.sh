@@ -33,6 +33,7 @@ run_check color-checks \
   Sources/SyncBrightness/ColorSyncMessages.swift \
   Sources/SyncBrightness/ColorSyncSession.swift \
   Sources/SyncBrightness/ColorSyncAdjust.swift \
+  Sources/SyncBrightness/PairingPayload.swift \
   Tests/ColorChecks/main.swift
   # DisplayColorState.swift: needed for the DisplayColorState.formula tests in the same driver
 
