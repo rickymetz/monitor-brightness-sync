@@ -1,0 +1,29 @@
+name: MBSync
+options:
+  bundleIdPrefix: com.rick
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  MBSync:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: ../Sources/SyncBrightness/ColorCorrection.swift
+      - path: ../Sources/SyncBrightness/ColorSyncMessages.swift
+      - path: ../Sources/SyncBrightness/PatchCardLayout.swift
+      - path: ../Sources/SyncBrightness/PatchCardAnalyzer.swift
+      - path: ../Sources/SyncBrightness/PairingPayload.swift
+      - path: ../Sources/SyncBrightness/FrameCodec.swift
+      - path: ../Sources/SyncBrightness/CaptureGate.swift
+    info:
+      path: Info.plist
+      properties:
+        NSCameraUsageDescription: "Used to photograph each display's calibration card to match colors."
+        NSLocalNetworkUsageDescription: "Used to connect to your Mac to coordinate color matching."
+        UILaunchScreen: {}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rick.mbsync
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
