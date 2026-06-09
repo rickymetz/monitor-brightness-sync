@@ -479,8 +479,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     guard colorSyncWC == nil else { colorSyncWC?.showWindow(nil); return }
     let wc = ColorSyncWindowController()
     wc.displays = buildColorSyncDisplayList()
-    wc.onSave = { [weak self] map in self?.saveColorCorrections(map) }
-    wc.onClose = { [weak self] in self?.colorSyncWC = nil }
+    wc.onPreview = { [weak self] map in self?.sync.applyColorCorrections(map) }  // apply live, do NOT persist
+    wc.onSave = { [weak self] map in self?.saveColorCorrections(map) }           // persist + apply
+    wc.onClose = { [weak self] in
+      guard let self else { return }
+      self.colorSyncWC = nil
+      // Discard any unsaved preview: revert displays to the last persisted state.
+      self.sync.applyColorCorrections(self.colorCorrections)
+    }
     wc.begin()
     colorSyncWC = wc
   }

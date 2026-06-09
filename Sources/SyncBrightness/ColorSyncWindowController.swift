@@ -3,6 +3,9 @@ import Cocoa
 final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
   /// (display id, NSScreen, label). Reference first (built-in when present).
   var displays: [(id: String, screen: NSScreen, label: String)] = []
+  /// Apply a correction map LIVE without persisting (preview/fine-tune).
+  var onPreview: (([String: ColorCorrection]) -> Void)?
+  /// Persist (and apply) a correction map. Only called from the Save button.
   var onSave: (([String: ColorCorrection]) -> Void)?
   /// Fired when the window closes so the owner can drop its reference (re-entrancy).
   var onClose: (() -> Void)?
@@ -66,7 +69,7 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
       guard let self else { return }
       self.corrections = map
       self.card.hide()
-      self.onSave?(map)                 // apply live immediately
+      self.onPreview?(map)              // apply live immediately (not persisted until Save)
       self.presentFineTune()
     }
     self.session = session
@@ -160,8 +163,8 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
       ])
     }
 
-    // Apply current (identity) state immediately
-    onSave?(adjustedMap())
+    // Apply current state immediately as a preview (not persisted until Save)
+    onPreview?(adjustedMap())
   }
 
   // MARK: - Slider tags (encode display index + kind into an Int)
@@ -185,14 +188,14 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
     if kind == 0 { t.warmCool = sender.doubleValue }
     else          { t.brightness = sender.doubleValue }
     tune[id] = t
-    onSave?(adjustedMap())
+    onPreview?(adjustedMap())
   }
 
   @objc private func beforeAfterToggled(_ sender: NSButton) {
     if sender.state == .on {
-      onSave?([:])   // identity everywhere → "before"
+      onPreview?([:])   // identity everywhere → "before"
     } else {
-      onSave?(adjustedMap())
+      onPreview?(adjustedMap())
     }
   }
 
