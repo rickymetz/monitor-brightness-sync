@@ -12,9 +12,11 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
   private let card = PatchCardWindow()
   private var session: ColorSyncSession?
   private var corrections: [String: ColorCorrection] = [:]
+  private var tune: [String: (warmCool: Double, brightness: Double)] = [:]
 
   private let imageView = NSImageView()
   private let statusLabel = NSTextField(wrappingLabelWithString: "")
+  private var tuneStack: NSStackView?
 
   convenience init() {
     let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 560),
@@ -74,9 +76,142 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
   }
 
   private func presentFineTune() {
-    statusLabel.stringValue = "Done — colors matched. Fine-tune coming next; close to keep."
+    statusLabel.stringValue = "Done — colors matched. Fine-tune below, then Save."
     imageView.image = nil
-    // Fine-tune sliders are added in Task A10.
+
+    // Remove any previous tune UI (e.g. if presentFineTune is called again)
+    tuneStack?.removeFromSuperview()
+
+    let nonRef = displays.dropFirst()
+    guard !nonRef.isEmpty else { return }
+
+    // Initialize tune state for each non-reference display
+    for d in nonRef where tune[d.id] == nil {
+      tune[d.id] = (warmCool: 0, brightness: 1)
+    }
+
+    var rows: [NSView] = []
+
+    // Per-display slider rows
+    for d in nonRef {
+      let header = NSTextField(labelWithString: d.label)
+      header.font = NSFont.boldSystemFont(ofSize: 12)
+
+      // Warm/cool slider
+      let warmLabel = NSTextField(labelWithString: "Warm ↔ Cool")
+      warmLabel.font = NSFont.systemFont(ofSize: 11)
+      let warmSlider = NSSlider(value: tune[d.id]?.warmCool ?? 0,
+                                minValue: -1, maxValue: 1, target: self,
+                                action: #selector(sliderChanged(_:)))
+      warmSlider.tag = sliderTag(id: d.id, kind: 0)
+      warmSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
+
+      let warmRow = NSStackView(views: [warmLabel, warmSlider])
+      warmRow.orientation = .horizontal
+      warmRow.spacing = 8
+      warmRow.alignment = .centerY
+
+      // Brightness slider
+      let brightLabel = NSTextField(labelWithString: "Brightness")
+      brightLabel.font = NSFont.systemFont(ofSize: 11)
+      let brightSlider = NSSlider(value: tune[d.id]?.brightness ?? 1,
+                                  minValue: 0.5, maxValue: 1, target: self,
+                                  action: #selector(sliderChanged(_:)))
+      brightSlider.tag = sliderTag(id: d.id, kind: 1)
+      brightSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
+
+      let brightRow = NSStackView(views: [brightLabel, brightSlider])
+      brightRow.orientation = .horizontal
+      brightRow.spacing = 8
+      brightRow.alignment = .centerY
+
+      let displayStack = NSStackView(views: [header, warmRow, brightRow])
+      displayStack.orientation = .vertical
+      displayStack.spacing = 6
+      displayStack.alignment = .leading
+
+      rows.append(displayStack)
+    }
+
+    // Before/After checkbox
+    let beforeAfter = NSButton(checkboxWithTitle: "Before (show uncorrected)", target: self,
+                               action: #selector(beforeAfterToggled(_:)))
+    rows.append(beforeAfter)
+
+    // Save button
+    let saveBtn = NSButton(title: "Save", target: self, action: #selector(saveTapped(_:)))
+    saveBtn.bezelStyle = .rounded
+    saveBtn.keyEquivalent = "\r"
+    rows.append(saveBtn)
+
+    let stack = NSStackView(views: rows)
+    stack.orientation = .vertical
+    stack.spacing = 12
+    stack.alignment = .leading
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    tuneStack = stack
+
+    window?.contentView?.addSubview(stack)
+    if let contentView = window?.contentView {
+      NSLayoutConstraint.activate([
+        stack.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 20),
+        stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+        stack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -24),
+      ])
+    }
+
+    // Apply current (identity) state immediately
+    onSave?(adjustedMap())
+  }
+
+  // MARK: - Slider tags (encode display index + kind into an Int)
+  // kind 0 = warmCool, kind 1 = brightness
+  private var sliderDisplayIDs: [Int: String] = [:]
+  private var sliderKinds: [Int: Int] = [:]
+  private var nextSliderTag = 100
+
+  private func sliderTag(id: String, kind: Int) -> Int {
+    let tag = nextSliderTag
+    sliderDisplayIDs[tag] = id
+    sliderKinds[tag] = kind
+    nextSliderTag += 1
+    return tag
+  }
+
+  @objc private func sliderChanged(_ sender: NSSlider) {
+    guard let id = sliderDisplayIDs[sender.tag],
+          let kind = sliderKinds[sender.tag] else { return }
+    var t = tune[id] ?? (warmCool: 0, brightness: 1)
+    if kind == 0 { t.warmCool = sender.doubleValue }
+    else          { t.brightness = sender.doubleValue }
+    tune[id] = t
+    onSave?(adjustedMap())
+  }
+
+  @objc private func beforeAfterToggled(_ sender: NSButton) {
+    if sender.state == .on {
+      onSave?([:])   // identity everywhere → "before"
+    } else {
+      onSave?(adjustedMap())
+    }
+  }
+
+  @objc private func saveTapped(_ sender: NSButton) {
+    onSave?(adjustedMap())
+    close()
+  }
+
+  private func adjustedMap() -> [String: ColorCorrection] {
+    var map: [String: ColorCorrection] = [:]
+    guard let refID = displays.first?.id else { return map }
+    map[refID] = .identity
+    for d in displays.dropFirst() {
+      let t = tune[d.id] ?? (warmCool: 0, brightness: 1)
+      map[d.id] = ColorSyncAdjust.adjust(corrections[d.id] ?? .identity,
+                                          warmCool: t.warmCool,
+                                          brightness: t.brightness)
+    }
+    return map
   }
 
   private func screen(for id: String) -> NSScreen? { displays.first(where: { $0.id == id })?.screen }

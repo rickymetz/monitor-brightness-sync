@@ -175,5 +175,16 @@ do {
   else { check(false, "expected retake after error") }
 }
 
+// ---- ColorSyncAdjust ----
+do {
+  let base = ColorCorrection(redGain: 1, greenGain: 1, blueGain: 1, gamma: 1)
+  let warm = ColorSyncAdjust.adjust(base, warmCool: 1, brightness: 1)
+  check(warm.redGain > warm.blueGain, "warm bias boosts red over blue")
+  let cool = ColorSyncAdjust.adjust(base, warmCool: -1, brightness: 1)
+  check(cool.blueGain > cool.redGain, "cool bias boosts blue over red")
+  let dim = ColorSyncAdjust.adjust(base, warmCool: 0, brightness: 0.5)
+  check(approx(dim.redGain, 0.5) && approx(dim.blueGain, 0.5), "brightness scales gains")
+}
+
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) FAILED.")
 exit(failures == 0 ? 0 : 1)
