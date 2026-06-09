@@ -67,7 +67,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var profiles: [String: BrightnessCurve] = [:]
 
   private let colorProfilesKey = "colorCorrectionProfiles"
+  private let colorSyncEnabledKey = "colorSyncEnabled"
   private var colorCorrections: [String: ColorCorrection] = [:]
+
+  private var colorSyncEnabled: Bool {
+    get { UserDefaults.standard.object(forKey: colorSyncEnabledKey) == nil ? true
+                                                                            : UserDefaults.standard.bool(forKey: colorSyncEnabledKey) }
+    set { UserDefaults.standard.set(newValue, forKey: colorSyncEnabledKey) }
+  }
+
+  /// What's actually applied: the saved corrections, or identity when disabled.
+  private var effectiveColorCorrections: [String: ColorCorrection] {
+    colorSyncEnabled ? colorCorrections : [:]
+  }
 
   private func loadColorCorrections() -> [String: ColorCorrection] {
     guard let data = UserDefaults.standard.data(forKey: colorProfilesKey),
@@ -81,7 +93,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     if let data = try? JSONEncoder().encode(map) {
       UserDefaults.standard.set(data, forKey: colorProfilesKey)
     }
-    sync.applyColorCorrections(colorCorrections)
+    colorSyncEnabled = true   // a fresh save implies "apply it"
+    sync.applyColorCorrections(effectiveColorCorrections)
+  }
+
+  /// Live toggle: apply the saved correction or revert to identity (for A/B).
+  private func setColorSyncEnabled(_ on: Bool) {
+    colorSyncEnabled = on
+    sync.applyColorCorrections(effectiveColorCorrections)
+  }
+
+  /// Clear the saved correction entirely and revert the displays.
+  private func resetColorSync() {
+    colorCorrections = [:]
+    UserDefaults.standard.removeObject(forKey: colorProfilesKey)
+    sync.applyColorCorrections([:])
+    controlWindowController?.colorSyncSummary = colorSyncSummaryText()
+    controlWindowController?.colorSyncEnabled = colorSyncEnabled
+  }
+
+  /// Human-readable summary of the saved correction, for the settings window.
+  private func colorSyncSummaryText() -> String {
+    guard !colorCorrections.isEmpty else { return "No color corrections saved yet." }
+    var names: [String: String] = ["builtin": "Built-in"]
+    for e in sync.snapshotExternals() { names[e.id] = e.name }
+    let lines = colorCorrections
+      .sorted { ($0.key) < ($1.key) }
+      .map { id, c -> String in
+        let name = names[id] ?? id
+        return String(format: "%@:  R %.2f  G %.2f  B %.2f  γ %.2f",
+                      name, c.redGain, c.greenGain, c.blueGain, c.gamma)
+      }
+    return lines.joined(separator: "\n")
   }
 
   private let disabledKey = "disabledMonitors"
@@ -132,7 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       self.monitors = monitors
       self.controlWindowController?.updateMonitors(monitors)
       self.renderStatus()
-      self.sync.applyColorCorrections(self.colorCorrections)
+      self.sync.applyColorCorrections(self.effectiveColorCorrections)
     }
     sync.onExternalChangedExternally = { [weak self] _ in
       // The monitor's brightness moved outside the app (its own buttons): drop
@@ -145,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     sync.setAllowBlackout(allowBlackout)
     sync.setDisabled(disabledIDs)
     sync.setProfiles(profiles)
-    sync.applyColorCorrections(colorCorrections)
+    sync.applyColorCorrections(effectiveColorCorrections)
     sync.start()
 
     setupWakeObservers()
@@ -388,6 +431,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       controller.onCalibrate = { [weak self] in self?.openCalibration() }
       controller.onReset = { [weak self] in self?.resetCalibration() }
       controller.onColorSync = { [weak self] in self?.openColorSync() }
+      controller.onSetColorSyncEnabled = { [weak self] on in self?.setColorSyncEnabled(on) }
+      controller.onResetColorSync = { [weak self] in self?.resetColorSync() }
       controller.onSetMonitorEnabled = { [weak self] id, enabled in self?.setMonitorEnabled(id, enabled) }
       controller.onSetMonitorBrightness = { [weak self] id, fraction in self?.sync.setManual(id: id, fraction: fraction) }
       controller.onSetHotkeysEnabled = { [weak self] on in self?.setHotkeysEnabled(on) }
@@ -401,6 +446,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     controlVisible = true
     updateActivationPolicy()
+    controlWindowController?.colorSyncEnabled = colorSyncEnabled
+    controlWindowController?.colorSyncSummary = colorSyncSummaryText()
     controlWindowController?.updateMonitors(monitors)
     controlWindowController?.show()
     pushToggleStates()
@@ -485,8 +532,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       guard let self else { return }
       self.colorSyncWC = nil
       // Discard any unsaved preview: revert displays to the last persisted state.
-      self.sync.applyColorCorrections(self.colorCorrections)
+      self.sync.applyColorCorrections(self.effectiveColorCorrections)
     }
+    // Measure the RAW displays: clear any existing correction (and folded-in
+    // warm/cool/brightness nudges) so the new measurement isn't taken through an
+    // already-corrected display. Cancelling restores the saved state via onClose.
+    sync.applyColorCorrections([:])
     wc.begin()
     colorSyncWC = wc
   }

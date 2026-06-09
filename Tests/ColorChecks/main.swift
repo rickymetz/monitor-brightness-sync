@@ -241,6 +241,30 @@ do {
   check(g3.record(found: true) == false, "reset clears streak")
 }
 
+// ---- ColorMatcher gamma (gray ramp) ----
+do {
+  func ramp(white: RGB, gamma: Double) -> PatchSamples {
+    func at(_ L: Double) -> RGB {
+      let f = pow(L / 0.8, gamma)
+      return RGB(r: white.r * f, g: white.g * f, b: white.b * f)
+    }
+    return PatchSamples(white: white, gray50: at(0.5), gray25: at(0.25),
+                        red: white, green: white, blue: white)
+  }
+  let neutral = RGB(r: 0.7, g: 0.7, b: 0.7)
+  let out = ColorMatcher.corrections(
+    measurements: [DisplayMeasurement(displayID: "r", samples: ramp(white: neutral, gamma: 2.2)),
+                   DisplayMeasurement(displayID: "t", samples: ramp(white: neutral, gamma: 2.6))],
+    referenceID: "r")
+  check(out["r"] == .identity, "reference gamma -> identity")
+  check(approx(out["t"]!.gamma, 2.2 / 2.6, 0.05), "corrective gamma = refGamma/targetGamma")
+  let out2 = ColorMatcher.corrections(
+    measurements: [DisplayMeasurement(displayID: "r", samples: ramp(white: neutral, gamma: 2.2)),
+                   DisplayMeasurement(displayID: "t", samples: ramp(white: neutral, gamma: 2.2))],
+    referenceID: "r")
+  check(approx(out2["t"]!.gamma, 1.0, 0.03), "matched gamma -> corrective 1")
+}
+
 // ---- FieldSampler ----
 do {
   let cs = CGColorSpaceCreateDeviceRGB()

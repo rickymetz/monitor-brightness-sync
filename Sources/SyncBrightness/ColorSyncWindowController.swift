@@ -13,9 +13,18 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
 
   private let transport = ColorSyncTransport()
   private let card = PatchCardWindow()
-  private var session: ColorSyncSession?
   private var corrections: [String: ColorCorrection] = [:]
   private var tune: [String: (warmCool: Double, brightness: Double)] = [:]
+
+  // Ramp-capture orchestration (Mac drives the levels; phone measures on request).
+  private let rampLevels = ColorMatcher.rampLevels        // [0.25, 0.5, 0.8]
+  private let lockLevel = 0.8                             // lock exposure on the brightest level
+  private let settleDelay = 0.6                           // wait after showing a level before measuring
+  private let darkDelay = 0.25                            // brief black flash between levels
+  private var displayIndex = -1
+  private var levelIndex = 0
+  private var rampReadings: [RGB] = []
+  private var collectedSamples: [String: PatchSamples] = [:]
 
   private let imageView = NSImageView()
   private let statusLabel = NSTextField(wrappingLabelWithString: "")
@@ -39,8 +48,7 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
   }
 
   func begin() {
-    let refs = displays.map { DisplayRef(id: $0.id, label: $0.label) }
-    guard let referenceID = displays.first?.id else {
+    guard displays.first != nil else {
       statusLabel.stringValue = "No displays found."
       showWindow(nil); return
     }
@@ -53,43 +61,100 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
       statusLabel.stringValue = "Could not start: \(error.localizedDescription)"
       showWindow(nil); return
     }
-
-    let session = ColorSyncSession(displays: refs, referenceID: referenceID, peer: transport)
-    session.onPrepareReference = { [weak self] id in
-      guard let self, let screen = self.screen(for: id) else { return }
-      self.card.show(.midGray, on: screen)
-      self.statusLabel.stringValue = "Aim your phone at the reference screen and hold steady to lock."
-    }
-    session.onShowCard = { [weak self] id in
-      guard let self, let screen = self.screen(for: id), let label = self.label(for: id) else { return }
-      // Fullscreen neutral field (same brightness as the lock target, so the
-      // locked exposure stays valid) — measured directly, no card detection.
-      self.card.show(.midGray, on: screen)
-      self.statusLabel.stringValue = "Point your phone at \(label) and fill the frame…"
-    }
-    session.onComplete = { [weak self] map in
-      guard let self else { return }
-      self.corrections = map
-      self.card.hide()
-      self.onPreview?(map)              // apply live immediately (not persisted until Save)
-      self.presentFineTune()
-      // Diagnostic readout: the camera-measured field per display + the gains.
-      var lines = ["Measured (camera RGB) → correction gains:"]
-      let collected = self.session?.collected ?? [:]
-      for d in self.displays {
-        if let w = collected[d.id]?.white {
-          lines.append(String(format: "%@:  R %.3f  G %.3f  B %.3f", d.label, w.r, w.g, w.b))
-        }
-        if let c = map[d.id] {
-          lines.append(String(format: "   → gains  R %.2f  G %.2f  B %.2f", c.redGain, c.greenGain, c.blueGain))
-        }
-      }
-      self.statusLabel.stringValue = lines.joined(separator: "\n")
-    }
-    self.session = session
-    transport.onReceive = { [weak self] msg in self?.session?.handle(msg) }
-    transport.onClientConnected = { [weak self] in self?.session?.start() }
+    transport.onReceive = { [weak self] msg in self?.handle(msg) }
+    transport.onClientConnected = { [weak self] in self?.startLock() }
     showWindow(nil)
+  }
+
+  // MARK: - Ramp orchestration (Mac drives levels; phone measures on request)
+
+  private var referenceID: String { displays.first?.id ?? "" }
+
+  private func startLock() {
+    guard let ref = displays.first, let screen = screen(for: ref.id) else { return }
+    collectedSamples.removeAll()
+    card.show(.solid(lockLevel), on: screen)
+    statusLabel.stringValue = "Press your phone's camera to \(ref.label) and tap Lock & Start."
+    transport.send(.prepareLock(referenceLabel: ref.label))
+  }
+
+  private func handle(_ message: PhoneToMac) {
+    switch message {
+    case .locked:
+      promptDisplay(0)
+    case .beginRamp(let id) where id == currentDisplayID:
+      startRamp()
+    case .measured(let level, let r, let g, let b) where level == levelIndex && displayIndex >= 0:
+      rampReadings.append(RGB(r: r, g: g, b: b))
+      levelIndex += 1
+      if levelIndex < rampLevels.count { showLevelThenMeasure() } else { finishDisplay() }
+    default:
+      break
+    }
+  }
+
+  private var currentDisplayID: String? {
+    displayIndex >= 0 && displayIndex < displays.count ? displays[displayIndex].id : nil
+  }
+
+  private func promptDisplay(_ i: Int) {
+    guard i < displays.count, let screen = screen(for: displays[i].id) else { return }
+    displayIndex = i
+    card.show(.solid(lockLevel), on: screen)
+    statusLabel.stringValue = "Press your phone to \(displays[i].label) and tap Capture (hold it there)."
+    transport.send(.capture(displayID: displays[i].id, label: displays[i].label))
+  }
+
+  private func startRamp() {
+    levelIndex = 0
+    rampReadings = []
+    showLevelThenMeasure()
+  }
+
+  private func showLevelThenMeasure() {
+    guard let screen = currentDisplayID.flatMap({ screen(for: $0) }) else { return }
+    let level = rampLevels[levelIndex]
+    // Brief black flash, then the level, then measure once it has settled.
+    card.show(.dark, on: screen)
+    DispatchQueue.main.asyncAfter(deadline: .now() + darkDelay) { [weak self] in
+      guard let self else { return }
+      self.card.show(.solid(level), on: screen)
+      DispatchQueue.main.asyncAfter(deadline: .now() + self.settleDelay) { [weak self] in
+        guard let self, self.displayIndex >= 0 else { return }
+        self.transport.send(.measure(level: self.levelIndex))
+      }
+    }
+  }
+
+  private func finishDisplay() {
+    guard let id = currentDisplayID, rampReadings.count == rampLevels.count else { return }
+    // rampLevels = [0.25, 0.5, 0.8] -> gray25, gray50, white(brightest).
+    collectedSamples[id] = PatchSamples(white: rampReadings[2], gray50: rampReadings[1],
+                                        gray25: rampReadings[0],
+                                        red: rampReadings[2], green: rampReadings[2], blue: rampReadings[2])
+    if displayIndex + 1 < displays.count { promptDisplay(displayIndex + 1) } else { finishAll() }
+  }
+
+  private func finishAll() {
+    transport.send(.done)
+    card.hide()
+    displayIndex = -1
+    let measurements = collectedSamples.map { DisplayMeasurement(displayID: $0.key, samples: $0.value) }
+    corrections = ColorMatcher.corrections(measurements: measurements, referenceID: referenceID)
+    onPreview?(corrections)
+    presentFineTune()
+    // Diagnostic readout: measured brightest-field RGB + gamma + gains per display.
+    var lines = ["Measured (brightest field) → correction:"]
+    for d in displays {
+      if let w = collectedSamples[d.id]?.white {
+        lines.append(String(format: "%@:  R %.3f  G %.3f  B %.3f", d.label, w.r, w.g, w.b))
+      }
+      if let c = corrections[d.id] {
+        lines.append(String(format: "   → gains R %.2f G %.2f B %.2f  γ %.2f",
+                            c.redGain, c.greenGain, c.blueGain, c.gamma))
+      }
+    }
+    statusLabel.stringValue = lines.joined(separator: "\n")
   }
 
   private func presentFineTune() {

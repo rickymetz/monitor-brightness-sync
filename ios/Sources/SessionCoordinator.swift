@@ -13,11 +13,15 @@ final class SessionCoordinator: ObservableObject {
   }
   @Published var phase: Phase = .pairing
   @Published var hint: String = ""
-  @Published var latestSamples: PatchSamples?
+  /// A steady, uniform bright field is in view (camera pressed to a screen).
+  @Published private(set) var fieldReady = false
+  /// The Mac is driving the gray-ramp for the current display (no tap needed).
+  @Published private(set) var ramping = false
 
   let client: ColorSyncClient
   let camera: CameraController
   private var currentDisplayID: String?
+  private var lastField: FieldMeasure?
 
   init(client: ColorSyncClient, camera: CameraController) {
     self.client = client
@@ -34,11 +38,19 @@ final class SessionCoordinator: ObservableObject {
       camera.start()
     case .capture(let id, let label):
       currentDisplayID = id
+      ramping = false
       phase = .capturing(label: label)
       hint = "Press the camera flat against \(label), then tap Capture."
+    case .measure(let level):
+      // The Mac has a ramp level showing; report what the camera currently sees.
+      let a = lastField?.average ?? RGB(r: 0, g: 0, b: 0)
+      client.send(.measured(level: level, r: a.r, g: a.g, b: a.b))
+      hint = "Measuring… hold steady (\(level + 1)/3)."
     case .retake(_, let h):
+      ramping = false
       hint = h
     case .done:
+      ramping = false
       phase = .done
       camera.stop()
     }
@@ -51,22 +63,22 @@ final class SessionCoordinator: ObservableObject {
     hint = "Locked. Waiting for the Mac…"
   }
 
-  private func onFrame(_ samples: PatchSamples?) {
-    // Non-nil when a steady, uniform bright field is in view (camera on a screen).
-    latestSamples = samples
+  private func onFrame(_ field: FieldMeasure) {
+    lastField = field
+    let ready = !ramping && field.uniformBright
+    if ready != fieldReady { fieldReady = ready }
   }
 
-  /// Whether a steady field is currently in view (drives the Capture button).
-  var fieldReady: Bool { latestSamples != nil }
-
-  /// Capture the current display — the user taps this while pressing the camera
-  /// flat against that display's gray screen. Explicit, one tap per display.
+  /// One tap per display: start the Mac-driven gray-ramp. Hold the camera against
+  /// the screen through the whole cycle; the Mac steps the levels automatically.
   func capture() {
-    guard case .capturing = phase, let id = currentDisplayID, let s = latestSamples else {
+    guard case .capturing = phase, let id = currentDisplayID, fieldReady else {
       hint = "Hold the camera flat against the screen, then tap Capture."
       return
     }
-    client.send(.samples(displayID: id, samples: s))
-    hint = "Captured. Move to the next screen…"
+    ramping = true
+    fieldReady = false
+    client.send(.beginRamp(displayID: id))
+    hint = "Hold steady against the screen — measuring…"
   }
 }

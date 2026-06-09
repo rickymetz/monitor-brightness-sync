@@ -9,7 +9,8 @@ struct DisplayRef: Equatable, Codable {
 /// Coordinator (Mac) -> capture client (phone).
 enum MacToPhone: Equatable, Codable {
   case prepareLock(referenceLabel: String)
-  case capture(displayID: String, label: String)
+  case capture(displayID: String, label: String)   // prompt: press camera + tap Capture
+  case measure(level: Int)                          // measure the currently shown ramp level now
   case retake(displayID: String, hint: String)
   case done
 }
@@ -18,7 +19,9 @@ enum MacToPhone: Equatable, Codable {
 enum PhoneToMac: Equatable, Codable {
   case paired
   case locked
-  case samples(displayID: String, samples: PatchSamples)
+  case beginRamp(displayID: String)                 // user tapped Capture; start the ramp
+  case measured(level: Int, r: Double, g: Double, b: Double)
+  case samples(displayID: String, samples: PatchSamples)  // legacy single-field path
   case error(reason: String)
 }
 

@@ -19,7 +19,13 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
   var onCalibrate: () -> Void = {}
   var onReset: () -> Void = {}
   var onColorSync: () -> Void = {}
+  var onSetColorSyncEnabled: (Bool) -> Void = { _ in }
+  var onResetColorSync: () -> Void = {}
   var onClose: () -> Void = {}
+
+  /// Current color-sync state, set by the owner before showing the window.
+  var colorSyncEnabled = true
+  var colorSyncSummary = "No color corrections saved yet."
   var onSetMonitorEnabled: (String, Bool) -> Void = { _, _ in }
   var onSetMonitorBrightness: (String, Double) -> Void = { _, _ in }
   var onSetHotkeysEnabled: (Bool) -> Void = { _ in }
@@ -44,6 +50,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
   private let keyControlSwitch = NSSwitch()
   private let loginSwitch = NSSwitch()
   private let hotkeysSwitch = NSSwitch()
+  private let colorSyncSwitch = NSSwitch()
   private let upRecorder = KeyRecorder()
   private let downRecorder = KeyRecorder()
 
@@ -259,7 +266,32 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
     let colorSyncButton = footerButton("Color Sync (beta)…", #selector(colorSync))
     colorSyncButton.frame = NSRect(x: margin, y: y, width: 180, height: 30)
     content.addSubview(colorSyncButton)
-    y += 30 + 10
+    y += 30 + 12
+
+    // Apply toggle + reset for a saved color-sync correction.
+    let csLabel = NSTextField(labelWithString: "Apply color sync correction")
+    csLabel.frame = NSRect(x: margin, y: y + 3, width: 240, height: 18)
+    content.addSubview(csLabel)
+    colorSyncSwitch.state = colorSyncEnabled ? .on : .off
+    colorSyncSwitch.target = self
+    colorSyncSwitch.action = #selector(toggleColorSyncEnabled)
+    colorSyncSwitch.frame = NSRect(x: winW - margin - 40, y: y, width: 40, height: 22)
+    content.addSubview(colorSyncSwitch)
+    y += 30
+
+    let csSummary = NSTextField(wrappingLabelWithString: colorSyncSummary)
+    csSummary.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    csSummary.textColor = .secondaryLabelColor
+    let summaryHeight = max(18, csSummary.sizeThatFits(NSSize(width: winW - 2 * margin, height: 400)).height)
+    csSummary.frame = NSRect(x: margin, y: y, width: winW - 2 * margin, height: summaryHeight)
+    content.addSubview(csSummary)
+    y += summaryHeight + 8
+
+    let resetCS = footerButton("Reset color sync", #selector(resetColorSyncTapped))
+    resetCS.frame = NSRect(x: margin, y: y, width: 160, height: 30)
+    content.addSubview(resetCS)
+    y += 30 + 16
+
     let quit = footerButton("Quit Monitor Brightness Sync", #selector(quit))
     quit.frame = NSRect(x: margin, y: y, width: 240, height: 30)
     content.addSubview(quit)
@@ -515,6 +547,11 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
   @objc private func calibrate() { onCalibrate() }
   @objc private func reset() { onReset() }
   @objc private func colorSync() { onColorSync() }
+  @objc private func toggleColorSyncEnabled() {
+    colorSyncEnabled = colorSyncSwitch.state == .on
+    onSetColorSyncEnabled(colorSyncEnabled)
+  }
+  @objc private func resetColorSyncTapped() { onResetColorSync() }
   @objc private func quit() { NSApp.terminate(nil) }
 
   @objc private func monitorEnableChanged(_ sender: NSSwitch) {

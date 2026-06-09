@@ -15,8 +15,8 @@ final class CameraController: NSObject, ObservableObject {
   private let ciContext = CIContext()
   private var device: AVCaptureDevice?
 
-  /// Called on the MAIN queue for each analyzed frame (nil = no card found).
-  var onFrame: ((PatchSamples?) -> Void)?
+  /// Called on the MAIN queue for each analyzed frame with the measured field.
+  var onFrame: ((FieldMeasure) -> Void)?
 
   func start() {
     guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
@@ -65,17 +65,12 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
     guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
     let ci = CIImage(cvPixelBuffer: pb)
     guard let cg = ciContext.createCGImage(ci, from: ci.extent) else {
-      DispatchQueue.main.async { self.onFrame?(nil) }
+      DispatchQueue.main.async { self.onFrame?(FieldMeasure(average: RGB(r: 0, g: 0, b: 0), uniformBright: false)) }
       return
     }
     // With the camera locked, the average of a fullscreen neutral field IS the
-    // display's chroma. Only `white` is used by the matcher; the field average is
-    // reported there (other fields are unused placeholders).
+    // display's chroma at that level. The Mac drives which level is shown.
     let field = FieldSampler.measure(image: cg)
-    let samples: PatchSamples? = field.uniformBright
-      ? PatchSamples(white: field.average, gray50: field.average, gray25: field.average,
-                     red: field.average, green: field.average, blue: field.average)
-      : nil
-    DispatchQueue.main.async { self.onFrame?(samples) }
+    DispatchQueue.main.async { self.onFrame?(field) }
   }
 }
