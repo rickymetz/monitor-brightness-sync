@@ -17,7 +17,6 @@ final class SessionCoordinator: ObservableObject {
 
   let client: ColorSyncClient
   let camera: CameraController
-  private var gate = CaptureGate(needed: 6)
   private var currentDisplayID: String?
 
   init(client: ColorSyncClient, camera: CameraController) {
@@ -31,15 +30,13 @@ final class SessionCoordinator: ObservableObject {
     switch msg {
     case .prepareLock(let refLabel):
       phase = .awaitingLock(referenceLabel: refLabel)
-      hint = "Aim at \(refLabel) and hold steady."
+      hint = "Press the camera flat against \(refLabel), then tap Lock & Start."
       camera.start()
     case .capture(let id, let label):
       currentDisplayID = id
-      gate.reset()
       phase = .capturing(label: label)
-      hint = "Photographing \(label)…"
+      hint = "Press the camera flat against \(label), then tap Capture."
     case .retake(_, let h):
-      gate.reset()
       hint = h
     case .done:
       phase = .done
@@ -55,19 +52,21 @@ final class SessionCoordinator: ObservableObject {
   }
 
   private func onFrame(_ samples: PatchSamples?) {
+    // Non-nil when a steady, uniform bright field is in view (camera on a screen).
     latestSamples = samples
-    if case .capturing = phase, let id = currentDisplayID {
-      if gate.record(found: samples != nil), let s = samples {
-        gate.reset()
-        client.send(.samples(displayID: id, samples: s))
-      }
-    }
   }
 
-  /// Manual shutter fallback (capturing phase): send the latest analyzed frame or an error.
-  func manualShutter() {
-    guard case .capturing = phase, let id = currentDisplayID else { return }
-    if let s = latestSamples { client.send(.samples(displayID: id, samples: s)) }
-    else { client.send(.error(reason: "no card detected")) }
+  /// Whether a steady field is currently in view (drives the Capture button).
+  var fieldReady: Bool { latestSamples != nil }
+
+  /// Capture the current display — the user taps this while pressing the camera
+  /// flat against that display's gray screen. Explicit, one tap per display.
+  func capture() {
+    guard case .capturing = phase, let id = currentDisplayID, let s = latestSamples else {
+      hint = "Hold the camera flat against the screen, then tap Capture."
+      return
+    }
+    client.send(.samples(displayID: id, samples: s))
+    hint = "Captured. Move to the next screen…"
   }
 }

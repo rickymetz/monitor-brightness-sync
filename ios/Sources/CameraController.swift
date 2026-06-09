@@ -68,7 +68,14 @@ extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate {
       DispatchQueue.main.async { self.onFrame?(nil) }
       return
     }
-    let samples = PatchCardAnalyzer.sample(image: cg)
+    // With the camera locked, the average of a fullscreen neutral field IS the
+    // display's chroma. Only `white` is used by the matcher; the field average is
+    // reported there (other fields are unused placeholders).
+    let field = FieldSampler.measure(image: cg)
+    let samples: PatchSamples? = field.uniformBright
+      ? PatchSamples(white: field.average, gray50: field.average, gray25: field.average,
+                     red: field.average, green: field.average, blue: field.average)
+      : nil
     DispatchQueue.main.async { self.onFrame?(samples) }
   }
 }

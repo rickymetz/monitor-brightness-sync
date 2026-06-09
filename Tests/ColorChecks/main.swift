@@ -241,5 +241,29 @@ do {
   check(g3.record(found: true) == false, "reset clears streak")
 }
 
+// ---- FieldSampler ----
+do {
+  let cs = CGColorSpaceCreateDeviceRGB()
+  func solid(_ r: Double, _ g: Double, _ b: Double) -> CGImage {
+    let ctx = CGContext(data: nil, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: 0,
+                        space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    ctx.setFillColor(red: r, green: g, blue: b, alpha: 1)
+    ctx.fill(CGRect(x: 0, y: 0, width: 100, height: 100))
+    return ctx.makeImage()!
+  }
+  let m = FieldSampler.measure(image: solid(0.4, 0.4, 0.6))
+  check(approx(m.average.r, 0.4, 0.05) && approx(m.average.b, 0.6, 0.05), "field average matches fill")
+  check(m.average.b > m.average.r, "bluish cast preserved")
+  check(m.uniformBright, "uniform bright field detected")
+  // half black / half white in the central region is not uniform
+  let ctx2 = CGContext(data: nil, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: 0,
+                       space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+  ctx2.setFillColor(red: 0, green: 0, blue: 0, alpha: 1); ctx2.fill(CGRect(x: 0, y: 0, width: 100, height: 100))
+  ctx2.setFillColor(red: 1, green: 1, blue: 1, alpha: 1); ctx2.fill(CGRect(x: 0, y: 0, width: 50, height: 100))
+  check(FieldSampler.measure(image: ctx2.makeImage()!).uniformBright == false, "split field is not uniform")
+  // a dark field is not bright enough
+  check(FieldSampler.measure(image: solid(0.05, 0.05, 0.05)).uniformBright == false, "dark field not uniformBright")
+}
+
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) FAILED.")
 exit(failures == 0 ? 0 : 1)

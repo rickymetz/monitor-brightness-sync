@@ -14,6 +14,12 @@ struct QRScannerView: UIViewControllerRepresentable {
   }
   func updateUIViewController(_ vc: ScannerVC, context: Context) {}
 
+  // Release the camera when leaving the pairing screen so the capture session
+  // (CameraController) can acquire it without a source conflict.
+  static func dismantleUIViewController(_ vc: ScannerVC, coordinator: Coordinator) {
+    vc.stopSession()
+  }
+
   final class Coordinator {
     let onCode: (String) -> Void
     private var fired = false
@@ -29,6 +35,13 @@ struct QRScannerView: UIViewControllerRepresentable {
 final class ScannerVC: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
   var onCode: ((String) -> Void)?
   private let session = AVCaptureSession()
+
+  func stopSession() {
+    if session.isRunning {
+      DispatchQueue.global(qos: .userInitiated).async { [session] in session.stopRunning() }
+    }
+  }
+  deinit { stopSession() }
 
   override func viewDidLoad() {
     super.viewDidLoad()

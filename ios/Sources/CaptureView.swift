@@ -17,8 +17,11 @@ struct CaptureView: View {
             .buttonStyle(.borderedProminent)
         }
         if case .capturing = coordinator.phase {
-          Button("Capture manually") { coordinator.manualShutter() }
-            .buttonStyle(.bordered).tint(.white)
+          Button(coordinator.fieldReady ? "Capture this screen" : "Hold against the screen…") {
+            coordinator.capture()
+          }
+          .buttonStyle(.borderedProminent)
+          .disabled(!coordinator.fieldReady)
         }
       }
       .padding(.bottom, 40)

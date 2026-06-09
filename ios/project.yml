@@ -16,12 +16,16 @@ targets:
       - path: ../Sources/SyncBrightness/PairingPayload.swift
       - path: ../Sources/SyncBrightness/FrameCodec.swift
       - path: ../Sources/SyncBrightness/CaptureGate.swift
+      - path: ../Sources/SyncBrightness/FieldSampler.swift
     info:
       path: Info.plist
       properties:
         NSCameraUsageDescription: "Used to photograph each display's calibration card to match colors."
         NSLocalNetworkUsageDescription: "Used to connect to your Mac to coordinate color matching."
         UILaunchScreen: {}
+        CFBundleURLTypes:
+          - CFBundleURLName: com.rick.mbsync.pair
+            CFBundleURLSchemes: [mbsync]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rick.mbsync

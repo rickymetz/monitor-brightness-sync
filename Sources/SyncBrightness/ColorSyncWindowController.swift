@@ -62,8 +62,10 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
     }
     session.onShowCard = { [weak self] id in
       guard let self, let screen = self.screen(for: id), let label = self.label(for: id) else { return }
-      self.card.show(.patchCard, on: screen)
-      self.statusLabel.stringValue = "Photographing \(label)…"
+      // Fullscreen neutral field (same brightness as the lock target, so the
+      // locked exposure stays valid) — measured directly, no card detection.
+      self.card.show(.midGray, on: screen)
+      self.statusLabel.stringValue = "Point your phone at \(label) and fill the frame…"
     }
     session.onComplete = { [weak self] map in
       guard let self else { return }
@@ -71,6 +73,18 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
       self.card.hide()
       self.onPreview?(map)              // apply live immediately (not persisted until Save)
       self.presentFineTune()
+      // Diagnostic readout: the camera-measured field per display + the gains.
+      var lines = ["Measured (camera RGB) → correction gains:"]
+      let collected = self.session?.collected ?? [:]
+      for d in self.displays {
+        if let w = collected[d.id]?.white {
+          lines.append(String(format: "%@:  R %.3f  G %.3f  B %.3f", d.label, w.r, w.g, w.b))
+        }
+        if let c = map[d.id] {
+          lines.append(String(format: "   → gains  R %.2f  G %.2f  B %.2f", c.redGain, c.greenGain, c.blueGain))
+        }
+      }
+      self.statusLabel.stringValue = lines.joined(separator: "\n")
     }
     self.session = session
     transport.onReceive = { [weak self] msg in self?.session?.handle(msg) }

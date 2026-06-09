@@ -16,10 +16,18 @@ struct MBSyncApp: App {
 
   var body: some Scene {
     WindowGroup {
-      switch coordinator.phase {
-      case .pairing: PairingView(client: client)
-      case .awaitingLock, .capturing: CaptureView(coordinator: coordinator)
-      case .done: DoneView()
+      Group {
+        switch coordinator.phase {
+        case .pairing: PairingView(client: client)
+        case .awaitingLock, .capturing: CaptureView(coordinator: coordinator)
+        case .done: DoneView()
+        }
+      }
+      // Launched/foregrounded via the system Camera scanning an mbsync:// QR.
+      .onOpenURL { url in
+        if let payload = PairingPayload.parse(url.absoluteString) {
+          client.connect(payload)
+        }
       }
     }
   }
