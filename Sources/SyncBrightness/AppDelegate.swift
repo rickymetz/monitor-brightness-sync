@@ -476,9 +476,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   @objc private func openSettings() { showControlWindow() }
 
   func openColorSync() {
+    guard colorSyncWC == nil else { colorSyncWC?.showWindow(nil); return }
     let wc = ColorSyncWindowController()
     wc.displays = buildColorSyncDisplayList()
     wc.onSave = { [weak self] map in self?.saveColorCorrections(map) }
+    wc.onClose = { [weak self] in self?.colorSyncWC = nil }
     wc.begin()
     colorSyncWC = wc
   }

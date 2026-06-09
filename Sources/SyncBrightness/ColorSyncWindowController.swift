@@ -1,9 +1,12 @@
 import Cocoa
 
-final class ColorSyncWindowController: NSWindowController {
+final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
   /// (display id, NSScreen, label). Reference first (built-in when present).
   var displays: [(id: String, screen: NSScreen, label: String)] = []
   var onSave: (([String: ColorCorrection]) -> Void)?
+  /// Fired when the window closes so the owner can drop its reference (re-entrancy).
+  var onClose: (() -> Void)?
+  private var didTearDown = false
 
   private let transport = ColorSyncTransport()
   private let card = PatchCardWindow()
@@ -18,6 +21,7 @@ final class ColorSyncWindowController: NSWindowController {
                      styleMask: [.titled, .closable], backing: .buffered, defer: false)
     w.title = "Color Sync (beta)"
     self.init(window: w)
+    w.delegate = self
     let stack = NSStackView(views: [statusLabel, imageView])
     stack.orientation = .vertical; stack.spacing = 16; stack.alignment = .centerX
     stack.translatesAutoresizingMaskIntoConstraints = false
@@ -78,7 +82,23 @@ final class ColorSyncWindowController: NSWindowController {
   private func screen(for id: String) -> NSScreen? { displays.first(where: { $0.id == id })?.screen }
   private func label(for id: String) -> String? { displays.first(where: { $0.id == id })?.label }
 
+  /// Stop the listener and hide the patch card. Idempotent so it's safe whether
+  /// teardown arrives via the close button (windowWillClose) or close().
+  private func tearDown() {
+    guard !didTearDown else { return }
+    didTearDown = true
+    transport.stop()
+    card.hide()
+  }
+
   override func close() {
-    transport.stop(); card.hide(); super.close()
+    tearDown(); super.close()
+  }
+
+  // The title-bar close button bypasses close(); funnel both paths here so the
+  // listener is always stopped and the owner drops its reference (re-entrancy).
+  func windowWillClose(_ notification: Notification) {
+    tearDown()
+    onClose?()
   }
 }
