@@ -531,13 +531,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     wc.onClose = { [weak self] in
       guard let self else { return }
       self.colorSyncWC = nil
-      // Discard any unsaved preview: revert displays to the last persisted state.
+      // Restore brightness + resume sync, and revert displays to the saved state
+      // (discarding any unsaved preview).
+      self.sync.endFixedBrightness()
       self.sync.applyColorCorrections(self.effectiveColorCorrections)
     }
     // Measure the RAW displays: clear any existing correction (and folded-in
     // warm/cool/brightness nudges) so the new measurement isn't taken through an
     // already-corrected display. Cancelling restores the saved state via onClose.
     sync.applyColorCorrections([:])
+    // Hold every display at a known, clip-safe brightness (50%) so each is
+    // measured at the same backlight operating point. Restored in onClose.
+    sync.beginFixedBrightness(0.5)
     wc.begin()
     colorSyncWC = wc
   }

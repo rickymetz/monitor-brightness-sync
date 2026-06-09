@@ -108,6 +108,38 @@ final class SyncController {
     queue.async { self.manualExternal = max(0.0, min(1.0, fraction)) }
   }
 
+  private var savedBuiltinFraction: Double?
+
+  /// Hold every display at one known brightness for color measurement: pause sync
+  /// (like calibration) and drive the built-in + externals to `level`. The
+  /// brightest gray field then sits at a consistent, clip-safe operating point on
+  /// each display. Restore with `endFixedBrightness()`.
+  func beginFixedBrightness(_ level: Double) {
+    queue.async {
+      let lvl = max(0.0, min(1.0, level))
+      if let id = self.builtinID { self.savedBuiltinFraction = BuiltinBrightness.fraction(of: id) }
+      self.calibrating = true
+      self.calibrationTargetID = nil
+      self.manualExternal = lvl
+      for display in self.externals { _ = display.setBrightness(fraction: lvl) }
+      if let id = self.builtinID { _ = BuiltinBrightness.setFraction(lvl, of: id) }
+    }
+  }
+
+  /// Restore the built-in's brightness and resume sync (externals re-mirror it).
+  func endFixedBrightness() {
+    queue.async {
+      if let id = self.builtinID, let saved = self.savedBuiltinFraction {
+        _ = BuiltinBrightness.setFraction(saved, of: id)
+      }
+      self.savedBuiltinFraction = nil
+      self.calibrating = false
+      self.calibrationTargetID = nil
+      self.lastManualApplied = -1
+      self.lastAppliedFraction = -1
+    }
+  }
+
   // MARK: - Manual control (per-monitor sliders, external-only mode)
 
   func setManual(id: String, fraction: Double) {
