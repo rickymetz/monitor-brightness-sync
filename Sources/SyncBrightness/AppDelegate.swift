@@ -547,7 +547,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     guard colorSyncWC == nil else { colorSyncWC?.showWindow(nil); return }
     let wc = ColorSyncWindowController()
     wc.displays = buildColorSyncDisplayList()
-    wc.onPreview = { [weak self] map in self?.sync.applyColorCorrections(map) }  // apply live, do NOT persist
+    wc.onPreview = { [weak self] map in self?.sync.applyColorCorrections(map, viaHardware: false) }  // live, gamma-only, no persist
     wc.onSave = { [weak self] map in self?.saveColorCorrections(map) }           // persist + apply
     wc.onShowTestField = { [weak self] in self?.showTestField() }
     wc.onHideTestField = { [weak self] in self?.hideTestField() }

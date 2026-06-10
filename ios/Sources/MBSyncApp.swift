@@ -24,7 +24,9 @@ struct MBSyncApp: App {
           switch coordinator.phase {
           case .pairing: PairingView(client: client, onDebug: { showDebug = true })
           case .awaitingLock, .capturing: CaptureView(coordinator: coordinator)
-          case .done: DoneView(onVerify: { showDebug = true })
+          case .done: DoneView(onVerify: { showDebug = true },
+                               onSampleAmbient: { coordinator.sampleAmbient() },
+                               ambientStatus: coordinator.ambientStatus)
           }
         }
       }

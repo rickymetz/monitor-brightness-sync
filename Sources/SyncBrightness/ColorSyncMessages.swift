@@ -20,10 +20,14 @@ enum PhoneToMac: Equatable, Codable {
   case paired
   case locked
   case beginRamp(displayID: String)                 // user tapped Capture; start the ramp
-  case measured(level: Int, r: Double, g: Double, b: Double)
+  // `source` reports how the field was measured: "raw" (linear Bayer) or an 8-bit
+  // fallback reason (e.g. "8bit:unavailable", "8bit:pixelbuffer-nil") — diagnostics.
+  case measured(level: Int, r: Double, g: Double, b: Double, source: String)
   case samples(displayID: String, samples: PatchSamples)  // legacy single-field path
   case beginVerify                                         // phone opened side-by-side; show test field
   case sideBySide(aR: Double, aG: Double, aB: Double, bR: Double, bG: Double, bB: Double)
+  case ambient(kelvin: Double)                             // ARKit ambient CCT → suggested warm/cool bias
+  case debug(message: String)                              // free-form diagnostics → Mac log file
   case error(reason: String)
 }
 

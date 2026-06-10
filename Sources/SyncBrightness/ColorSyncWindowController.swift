@@ -20,15 +20,23 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
   private var corrections: [String: ColorCorrection] = [:]
   private var tune: [String: (warmCool: Double, brightness: Double)] = [:]
 
-  // Ramp-capture orchestration (Mac drives the levels; phone measures on request).
-  private let rampLevels = ColorMatcher.rampLevels        // [0.25, 0.5, 0.8]
+  // Capture orchestration (Mac drives the fields; phone measures on request).
+  // Three neutral gray levels (gamma/white-point) followed by the three primaries
+  // (gamut), so ColorMatcher gets real R/G/B instead of white placeholders.
+  private let captureFields: [PatchCardWindow.Content] = [
+    .solid(0.25), .solid(0.5), .solid(0.8),
+    .color(RGB(r: 1, g: 0, b: 0)), .color(RGB(r: 0, g: 1, b: 0)), .color(RGB(r: 0, g: 0, b: 1)),
+  ]
   private let lockLevel = 0.8                             // lock exposure on the brightest level
-  private let settleDelay = 0.6                           // wait after showing a level before measuring
-  private let darkDelay = 0.25                            // brief black flash between levels
+  private let settleDelay = 0.6                           // wait after showing a field before measuring
+  private let darkDelay = 0.25                            // brief black flash between fields
   private var displayIndex = -1
   private var levelIndex = 0
   private var rampReadings: [RGB] = []
+  private var rampSources: [String] = []
   private var collectedSamples: [String: PatchSamples] = [:]
+  private var collectedSources: [String: [String]] = [:]
+  private var matchReports: [ColorMatcher.MatchReport] = []
 
   private let imageView = NSImageView()
   private let statusLabel = NSTextField(wrappingLabelWithString: "")
@@ -88,18 +96,39 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
       promptDisplay(0)
     case .beginRamp(let id) where id == currentDisplayID:
       startRamp()
-    case .measured(let level, let r, let g, let b) where level == levelIndex && displayIndex >= 0:
+    case .measured(let level, let r, let g, let b, let source) where level == levelIndex && displayIndex >= 0:
       rampReadings.append(RGB(r: r, g: g, b: b))
+      rampSources.append(source)
       levelIndex += 1
-      if levelIndex < rampLevels.count { showLevelThenMeasure() } else { finishDisplay() }
+      if levelIndex < captureFields.count { showLevelThenMeasure() } else { finishDisplay() }
     case .beginVerify:
       onShowTestField?()
     case .sideBySide(let aR, let aG, let aB, let bR, let bG, let bB):
       onHideTestField?()
       reportSideBySide(a: RGB(r: aR, g: aG, b: aB), b: RGB(r: bR, g: bG, b: bB))
+    case .ambient(let kelvin):
+      applyAmbientBias(kelvin: kelvin)
+    case .debug(let message):
+      ColorSyncDebugLog.log("PHONE \(message)")
     default:
       break
     }
+  }
+
+  /// Apply an ARKit ambient color-temperature reading as a *suggested* warm/cool
+  /// starting bias on every non-reference display, then refresh the fine-tune.
+  /// The user can still drag the sliders afterward.
+  private func applyAmbientBias(kelvin: Double) {
+    guard !corrections.isEmpty else { return }   // only meaningful once we have a match to bias
+    let bias = AmbientBias.warmCool(forKelvin: kelvin)
+    for d in displays.dropFirst() {
+      var t = tune[d.id] ?? (warmCool: 0, brightness: 1)
+      t.warmCool = bias
+      tune[d.id] = t
+    }
+    presentFineTune()   // rebuilds sliders from `tune`, so they reflect the suggestion
+    statusLabel.stringValue = String(format: "Room light ≈ %.0fK → suggested warm/cool %+.2f. Adjust or Save.",
+                                     kelvin, bias)
   }
 
   /// Verdict on a side-by-side debug capture. Judges CHROMA (luminance-normalized)
@@ -108,8 +137,16 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
   private func reportSideBySide(a: RGB, b: RGB) {
     let m = SideBySideMetric.compare(a, b)
     statusLabel.stringValue = String(
-      format: "Side-by-side check:\nA (%.3f, %.3f, %.3f)  B (%.3f, %.3f, %.3f)\nColor Δ %.3f — %@\nBrightness differs %.3f (brightness sync's job, not color)",
-      a.r, a.g, a.b, b.r, b.g, b.b, m.chroma, m.verdict, m.brightness)
+      format: "Side-by-side check:\nA (%.3f, %.3f, %.3f)  B (%.3f, %.3f, %.3f)\nMatch ΔE %.1f — %@\n(color ΔE %.1f, brightness Δ %.3f)",
+      a.r, a.g, a.b, b.r, b.g, b.b, m.deltaE, m.verdict, m.chromaOnly, m.brightness)
+    ColorSyncDebugLog.log(String(format: "VERIFY  A(%.3f,%.3f,%.3f) B(%.3f,%.3f,%.3f)  matchΔE %.2f (%@)  colorΔE %.2f  brightnessΔ %.3f",
+      a.r, a.g, a.b, b.r, b.g, b.b, m.deltaE, m.verdict, m.chromaOnly, m.brightness))
+    // What's actually applied right now (base correction folded with the sliders).
+    for (id, c) in adjustedMap() {
+      let label = displays.first(where: { $0.id == id })?.label ?? id
+      ColorSyncDebugLog.log(String(format: "VERIFY applied  %@ [%@]  gains R %.3f G %.3f B %.3f γ %.3f",
+        label, id, c.redGain, c.greenGain, c.blueGain, c.gamma))
+    }
   }
 
   private var currentDisplayID: String? {
@@ -127,17 +164,18 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
   private func startRamp() {
     levelIndex = 0
     rampReadings = []
+    rampSources = []
     showLevelThenMeasure()
   }
 
   private func showLevelThenMeasure() {
     guard let screen = currentDisplayID.flatMap({ screen(for: $0) }) else { return }
-    let level = rampLevels[levelIndex]
-    // Brief black flash, then the level, then measure once it has settled.
+    let field = captureFields[levelIndex]
+    // Brief black flash, then the field, then measure once it has settled.
     card.show(.dark, on: screen)
     DispatchQueue.main.asyncAfter(deadline: .now() + darkDelay) { [weak self] in
       guard let self else { return }
-      self.card.show(.solid(level), on: screen)
+      self.card.show(field, on: screen)
       DispatchQueue.main.asyncAfter(deadline: .now() + self.settleDelay) { [weak self] in
         guard let self, self.displayIndex >= 0 else { return }
         self.transport.send(.measure(level: self.levelIndex))
@@ -146,11 +184,12 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
   }
 
   private func finishDisplay() {
-    guard let id = currentDisplayID, rampReadings.count == rampLevels.count else { return }
-    // rampLevels = [0.25, 0.5, 0.8] -> gray25, gray50, white(brightest).
+    guard let id = currentDisplayID, rampReadings.count == captureFields.count else { return }
+    // captureFields = gray25, gray50, white(0.8), red, green, blue.
     collectedSamples[id] = PatchSamples(white: rampReadings[2], gray50: rampReadings[1],
                                         gray25: rampReadings[0],
-                                        red: rampReadings[2], green: rampReadings[2], blue: rampReadings[2])
+                                        red: rampReadings[3], green: rampReadings[4], blue: rampReadings[5])
+    collectedSources[id] = rampSources
     if displayIndex + 1 < displays.count { promptDisplay(displayIndex + 1) } else { finishAll() }
   }
 
@@ -160,10 +199,36 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
     displayIndex = -1
     let measurements = collectedSamples.map { DisplayMeasurement(displayID: $0.key, samples: $0.value) }
     corrections = ColorMatcher.corrections(measurements: measurements, referenceID: referenceID)
+    matchReports = ColorMatcher.report(measurements: measurements, referenceID: referenceID,
+                                       corrections: corrections)
     onPreview?(corrections)
+
+    // Diagnostics to file (readable without screenshots).
+    ColorSyncDebugLog.session("MEASUREMENT  reference=\(referenceID)")
+    for d in displays {
+      if let src = collectedSources[d.id] {
+        ColorSyncDebugLog.log("\(d.label) [\(d.id)] capture source per field: \(src.joined(separator: ", "))")
+      }
+      if let s = collectedSamples[d.id] {
+        ColorSyncDebugLog.log(String(format: "%@ [%@] measured  white(%.3f,%.3f,%.3f) gray50(%.3f,%.3f,%.3f) gray25(%.3f,%.3f,%.3f) R(%.3f,%.3f,%.3f) G(%.3f,%.3f,%.3f) B(%.3f,%.3f,%.3f)",
+          d.label, d.id, s.white.r, s.white.g, s.white.b, s.gray50.r, s.gray50.g, s.gray50.b,
+          s.gray25.r, s.gray25.g, s.gray25.b, s.red.r, s.red.g, s.red.b,
+          s.green.r, s.green.g, s.green.b, s.blue.r, s.blue.g, s.blue.b))
+      }
+      if let c = corrections[d.id] {
+        ColorSyncDebugLog.log(String(format: "%@ [%@] gains  R %.3f G %.3f B %.3f  γ %.3f%@",
+          d.label, d.id, c.redGain, c.greenGain, c.blueGain, c.gamma,
+          d.id == referenceID ? "  (reference)" : ""))
+      }
+      if let rep = matchReports.first(where: { $0.displayID == d.id }) {
+        ColorSyncDebugLog.log(String(format: "%@ [%@] match  diagonalΔE %.2f  matrixΔE %.2f  worst:%@",
+          d.label, d.id, rep.diagonalDeltaE, rep.matrixDeltaE, rep.worstPatch))
+      }
+    }
     presentFineTune()
-    // Diagnostic readout: measured brightest-field RGB + gamma + gains per display.
-    var lines = ["Measured (brightest field) → correction:"]
+    // Diagnostic readout: measured white RGB + gamma/gains, plus the ΔE2000 match
+    // quality (what the diagonal achieves vs. the headroom a 3×3/ICC path would buy).
+    var lines = ["Measured (white field) → correction:"]
     for d in displays {
       if let w = collectedSamples[d.id]?.white {
         lines.append(String(format: "%@:  R %.3f  G %.3f  B %.3f", d.label, w.r, w.g, w.b))
@@ -171,6 +236,10 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
       if let c = corrections[d.id] {
         lines.append(String(format: "   → gains R %.2f G %.2f B %.2f  γ %.2f",
                             c.redGain, c.greenGain, c.blueGain, c.gamma))
+      }
+      if let rep = matchReports.first(where: { $0.displayID == d.id }) {
+        lines.append(String(format: "   match ΔE %.1f (3×3 would reach %.1f; worst: %@)",
+                            rep.diagonalDeltaE, rep.matrixDeltaE, rep.worstPatch))
       }
     }
     statusLabel.stringValue = lines.joined(separator: "\n")
@@ -308,7 +377,10 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
   private func adjustedMap() -> [String: ColorCorrection] {
     var map: [String: ColorCorrection] = [:]
     guard let refID = displays.first?.id else { return map }
-    map[refID] = .identity
+    // The reference is NOT necessarily identity: when matching brightness down to a
+    // dimmer display, the reference (e.g. the brighter built-in) carries its own
+    // dimming correction. Apply it as computed (no warm/cool/brightness slider).
+    map[refID] = corrections[refID] ?? .identity
     for d in displays.dropFirst() {
       let t = tune[d.id] ?? (warmCool: 0, brightness: 1)
       map[d.id] = ColorSyncAdjust.adjust(corrections[d.id] ?? .identity,

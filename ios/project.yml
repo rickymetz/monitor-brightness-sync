@@ -10,6 +10,9 @@ targets:
     sources:
       - path: Sources
       - path: ../Sources/SyncBrightness/ColorCorrection.swift
+      - path: ../Sources/SyncBrightness/DeltaE.swift
+      - path: ../Sources/SyncBrightness/BayerField.swift
+      - path: ../Sources/SyncBrightness/AmbientBias.swift
       - path: ../Sources/SyncBrightness/ColorSyncMessages.swift
       - path: ../Sources/SyncBrightness/PatchCardLayout.swift
       - path: ../Sources/SyncBrightness/PatchCardAnalyzer.swift

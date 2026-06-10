@@ -234,9 +234,12 @@ final class SyncController {
     }
   }
 
-  /// Restore gamma before exit.
+  /// Restore gamma and any hardware color shift before exit.
   func shutdown() {
-    queue.sync { self.gamma.reset() }
+    queue.sync {
+      for display in self.externals { display.restoreColorHardware() }
+      self.gamma.reset()
+    }
   }
 
   // MARK: - Polling
@@ -325,6 +328,7 @@ final class SyncController {
     externals = DDC.externalDisplays()
     for display in externals {
       display.refreshMaxBrightness()
+      display.probeColorCapabilities()
       display.curve = profiles[display.id] ?? .default
     }
     lastAppliedFraction = -1
@@ -341,11 +345,32 @@ final class SyncController {
 
   /// Apply per-display color corrections keyed by ExternalDisplay.id. Runs on the
   /// serial queue; missing ids reset to identity. Safe after reconnect/wake.
-  func applyColorCorrections(_ map: [String: ColorCorrection]) {
+  /// Apply per-display color corrections. `viaHardware` routes the white-point
+  /// shift to the panel's DDC gain controls when available; pass `false` for live
+  /// previews (e.g. dragging a fine-tune slider) so we don't flood the monitor
+  /// with DDC writes — those stay on the instant gamma table.
+  func applyColorCorrections(_ map: [String: ColorCorrection], viaHardware: Bool = true) {
     queue.async {
+      // The built-in (reference) has no DDC, so its correction — used when matching
+      // brightness DOWN to a dimmer external dims the built-in — goes on the gamma
+      // table. Keyed "builtin" by the color-sync display list.
+      if let bID = self.builtinID {
+        self.gamma.setCorrection(bID, map["builtin"] ?? .identity)
+      }
       for display in self.externals {
         guard let cg = display.cgDisplayID else { continue }
-        self.gamma.setCorrection(cg, map[display.id] ?? .identity)
+        let target = map[display.id] ?? .identity
+        if viaHardware {
+          // Prefer the panel's own gain controls for the white-point shift; whatever
+          // it can't do in hardware (gamma, or the whole correction on monitors
+          // without color VCPs) comes back as the residual for the gamma table.
+          self.gamma.setCorrection(cg, display.applyColorCorrection(target))
+        } else {
+          // Preview: undo any committed hardware shift and render the full
+          // correction on the gamma table (fast, no DDC traffic).
+          display.restoreColorHardware()
+          self.gamma.setCorrection(cg, target)
+        }
       }
     }
   }

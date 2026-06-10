@@ -301,15 +301,96 @@ do {
 
 // ---- SideBySideMetric ----
 do {
-  // pure brightness difference (B uniformly brighter) → chroma ~0, brightness > 0
+  // pure brightness difference (B uniformly brighter) → chroma ~0, but since we now
+  // match brightness too, the full-ΔE verdict is NOT "matched".
   let m = SideBySideMetric.compare(RGB(r: 0.5, g: 0.5, b: 0.5), RGB(r: 0.6, g: 0.6, b: 0.6))
   check(approx(m.chroma, 0, 0.001), "uniform brightness diff -> chroma ~0")
+  check(approx(m.chromaOnly, 0, 0.05), "uniform brightness diff -> chromaOnly ΔE ~0")
   check(m.brightness > 0.09, "brightness difference captured")
-  check(m.verdict.contains("matched"), "matched verdict when chroma is ~0")
+  check(!m.verdict.contains("matched"), "brightness diff alone is NOT a match (brightness now counts)")
+  // identical colors → matched
+  let same = SideBySideMetric.compare(RGB(r: 0.5, g: 0.5, b: 0.5), RGB(r: 0.5, g: 0.5, b: 0.5))
+  check(same.verdict.contains("matched"), "identical → matched ✓")
   // a real colour difference -> large chroma, not matched
   let m2 = SideBySideMetric.compare(RGB(r: 0.6, g: 0.5, b: 0.4), RGB(r: 0.4, g: 0.5, b: 0.6))
   check(m2.chroma > 0.1, "color difference -> chroma large")
   check(!m2.verdict.contains("matched"), "not matched on a color difference")
+}
+
+// ---- ColorMatcher brightness + color match (per-channel-min common white) ----
+do {
+  // ref is brighter and neutral; ext is dimmer and warm (blue-starved).
+  let ref = samplesWithWhite(RGB(r: 0.60, g: 0.60, b: 0.60))
+  let ext = samplesWithWhite(RGB(r: 0.50, g: 0.45, b: 0.40))
+  let out = ColorMatcher.corrections(
+    measurements: [DisplayMeasurement(displayID: "builtin", samples: ref),
+                   DisplayMeasurement(displayID: "ext", samples: ext)],
+    referenceID: "builtin")
+  let cr = out["builtin"]!, ce = out["ext"]!
+  // Reference is the brighter one → it is attenuated (no longer identity).
+  check(cr != .identity && cr.redGain < 1, "brighter reference is dimmed to match")
+  check(ce.redGain == 1 && ce.greenGain == 1 && ce.blueGain == 1, "dimmer display (the floor) is left at full")
+  // Corrected whites must be EQUAL in all channels → color AND brightness matched.
+  func corrected(_ w: RGB, _ c: ColorCorrection) -> RGB { RGB(r: w.r*c.redGain, g: w.g*c.greenGain, b: w.b*c.blueGain) }
+  let wr = corrected(ref.white, cr), we = corrected(ext.white, ce)
+  check(approx(wr.r, we.r) && approx(wr.g, we.g) && approx(wr.b, we.b), "corrected whites equal → both matched")
+  // And the common white is the per-channel minimum.
+  check(approx(wr.r, 0.5) && approx(wr.g, 0.45) && approx(wr.b, 0.4), "common white = per-channel min")
+}
+
+// ---- Matrix3 + primaries matrix ----
+do {
+  // M = R · T⁻¹ must map each target primary exactly onto the reference primary.
+  func samples(r: RGB, g: RGB, b: RGB) -> PatchSamples {
+    PatchSamples(white: RGB(r: r.r+g.r+b.r, g: r.g+g.g+b.g, b: r.b+g.b+b.b),
+                 gray50: RGB(r: 0.5, g: 0.5, b: 0.5), gray25: RGB(r: 0.25, g: 0.25, b: 0.25),
+                 red: r, green: g, blue: b)
+  }
+  let ref = samples(r: RGB(r: 0.90, g: 0.00, b: 0.00),
+                    g: RGB(r: 0.00, g: 0.80, b: 0.00),
+                    b: RGB(r: 0.00, g: 0.00, b: 0.70))
+  // Target with cross-channel bleed (a different-gamut panel).
+  let tgt = samples(r: RGB(r: 0.80, g: 0.10, b: 0.05),
+                    g: RGB(r: 0.08, g: 0.75, b: 0.06),
+                    b: RGB(r: 0.04, g: 0.07, b: 0.65))
+  let M = ColorMatcher.primaryMatrix(target: tgt, reference: ref)!
+  let mr = M * tgt.red, mg = M * tgt.green, mb = M * tgt.blue
+  check(approx(mr.r, ref.red.r, 1e-9) && approx(mr.g, ref.red.g, 1e-9), "matrix maps target red → ref red")
+  check(approx(mg.g, ref.green.g, 1e-9) && approx(mb.b, ref.blue.b, 1e-9), "matrix maps target green/blue → ref")
+
+  let identM = Matrix3.identity
+  check(identM * RGB(r: 0.3, g: 0.6, b: 0.9) == RGB(r: 0.3, g: 0.6, b: 0.9), "identity matrix is a no-op")
+  check(Matrix3([[2,0,0],[0,0,0],[0,0,1]]).inverse == nil, "singular matrix → nil inverse")
+}
+
+// ---- ColorMatcher.report (residual ΔE: diagonal vs full matrix) ----
+do {
+  func display(r: RGB, g: RGB, b: RGB) -> PatchSamples {
+    PatchSamples(white: RGB(r: r.r+g.r+b.r, g: r.g+g.g+b.g, b: r.b+g.b+b.b),
+                 gray50: RGB(r: (r.r+g.r+b.r)/2, g: (r.g+g.g+b.g)/2, b: (r.b+g.b+b.b)/2),
+                 gray25: RGB(r: (r.r+g.r+b.r)/4, g: (r.g+g.g+b.g)/4, b: (r.b+g.b+b.b)/4),
+                 red: r, green: g, blue: b)
+  }
+  let ref = display(r: RGB(r: 0.30, g: 0, b: 0), g: RGB(r: 0, g: 0.30, b: 0), b: RGB(r: 0, g: 0, b: 0.30))
+  // Cross-channel target: a diagonal can't undo the bleed, a 3×3 can.
+  let tgt = display(r: RGB(r: 0.30, g: 0.05, b: 0.02), g: RGB(r: 0.04, g: 0.30, b: 0.03), b: RGB(r: 0.02, g: 0.03, b: 0.30))
+  let ms = [DisplayMeasurement(displayID: "ref", samples: ref),
+            DisplayMeasurement(displayID: "ext", samples: tgt)]
+  let corr = ColorMatcher.corrections(measurements: ms, referenceID: "ref")
+  let reports = ColorMatcher.report(measurements: ms, referenceID: "ref", corrections: corr)
+  check(reports.count == 1 && reports[0].displayID == "ext", "report only for non-reference display")
+  let rep = reports[0]
+  check(rep.matrixDeltaE < rep.diagonalDeltaE, "full 3×3 leaves less residual than the diagonal")
+  check(rep.matrixDeltaE < 0.5, "3×3 nearly eliminates the cross-channel residual")
+  check(rep.diagonalDeltaE > rep.matrixDeltaE + 0.5, "diagonal residual is materially larger")
+
+  // A purely diagonal difference: the diagonal correction already nails it.
+  let tgtDiag = display(r: RGB(r: 0.36, g: 0, b: 0), g: RGB(r: 0, g: 0.24, b: 0), b: RGB(r: 0, g: 0, b: 0.33))
+  let ms2 = [DisplayMeasurement(displayID: "ref", samples: ref),
+             DisplayMeasurement(displayID: "ext", samples: tgtDiag)]
+  let corr2 = ColorMatcher.corrections(measurements: ms2, referenceID: "ref")
+  let rep2 = ColorMatcher.report(measurements: ms2, referenceID: "ref", corrections: corr2)[0]
+  check(rep2.diagonalDeltaE < 1.0, "diagonal distortion → small diagonal residual")
 }
 
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) FAILED.")

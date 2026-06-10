@@ -17,9 +17,12 @@ final class SessionCoordinator: ObservableObject {
   @Published private(set) var fieldReady = false
   /// The Mac is driving the gray-ramp for the current display (no tap needed).
   @Published private(set) var ramping = false
+  /// Status of the optional ambient-light (ARKit) sampling on the Done screen.
+  @Published private(set) var ambientStatus: String?
 
   let client: ColorSyncClient
   let camera: CameraController
+  private let ambient = AmbientLight()
   private var currentDisplayID: String?
   private var lastField: FieldMeasure?
 
@@ -28,6 +31,9 @@ final class SessionCoordinator: ObservableObject {
     self.camera = camera
     client.onMessage = { [weak self] in self?.handle($0) }
     camera.onFrame = { [weak self] in self?.onFrame($0) }
+    camera.onDiagnostics = { [weak self] diag in
+      Task { @MainActor in self?.client.send(.debug(message: diag)) }
+    }
   }
 
   private func handle(_ msg: MacToPhone) {
@@ -42,10 +48,17 @@ final class SessionCoordinator: ObservableObject {
       phase = .capturing(label: label)
       hint = "Press the camera flat against \(label), then tap Capture."
     case .measure(let level):
-      // The Mac has a ramp level showing; report what the camera currently sees.
-      let a = lastField?.average ?? RGB(r: 0, g: 0, b: 0)
-      client.send(.measured(level: level, r: a.r, g: a.g, b: a.b))
-      hint = "Measuring… hold steady (\(level + 1)/3)."
+      // The Mac has a field showing; capture a linear RAW still and report it.
+      // Falls back to the 8-bit preview average if RAW is unavailable/failed.
+      hint = "Measuring… hold steady (\(level + 1)/6)."
+      let fallback = lastField?.average ?? RGB(r: 0, g: 0, b: 0)
+      camera.captureRAWField { [weak self] rgb, source in
+        Task { @MainActor in
+          guard let self else { return }
+          let a = rgb ?? fallback
+          self.client.send(.measured(level: level, r: a.r, g: a.g, b: a.b, source: source))
+        }
+      }
     case .retake(_, let h):
       ramping = false
       hint = h
@@ -61,6 +74,21 @@ final class SessionCoordinator: ObservableObject {
     camera.lock()
     client.send(.locked)
     hint = "Locked. Waiting for the Mac…"
+  }
+
+  /// Optional, on the Done screen: read room lighting via ARKit and send the
+  /// ambient color temperature to the Mac as a suggested warm/cool bias. Safe here
+  /// because the capture session is already stopped (ARKit needs the camera too).
+  func sampleAmbient() {
+    guard AmbientLight.isSupported else { ambientStatus = "Ambient light not available on this device."; return }
+    ambientStatus = "Reading room light… point the phone at your scene."
+    ambient.read { [weak self] reading in
+      guard let self else { return }
+      guard let reading else { self.ambientStatus = "Couldn't read ambient light."; return }
+      self.client.send(.ambient(kelvin: reading.kelvin))
+      self.ambientStatus = String(format: "Room ≈ %.0fK → sent warm/cool %+.2f to the Mac.",
+                                  reading.kelvin, reading.warmCoolBias)
+    }
   }
 
   private func onFrame(_ field: FieldMeasure) {
