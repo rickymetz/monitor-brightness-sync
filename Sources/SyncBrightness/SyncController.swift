@@ -108,6 +108,38 @@ final class SyncController {
     queue.async { self.manualExternal = max(0.0, min(1.0, fraction)) }
   }
 
+  private var savedBuiltinFraction: Double?
+
+  /// Hold every display at one known brightness for color measurement: pause sync
+  /// (like calibration) and drive the built-in + externals to `level`. The
+  /// brightest gray field then sits at a consistent, clip-safe operating point on
+  /// each display. Restore with `endFixedBrightness()`.
+  func beginFixedBrightness(_ level: Double) {
+    queue.async {
+      let lvl = max(0.0, min(1.0, level))
+      if let id = self.builtinID { self.savedBuiltinFraction = BuiltinBrightness.fraction(of: id) }
+      self.calibrating = true
+      self.calibrationTargetID = nil
+      self.manualExternal = lvl
+      for display in self.externals { _ = display.setBrightness(fraction: lvl) }
+      if let id = self.builtinID { _ = BuiltinBrightness.setFraction(lvl, of: id) }
+    }
+  }
+
+  /// Restore the built-in's brightness and resume sync (externals re-mirror it).
+  func endFixedBrightness() {
+    queue.async {
+      if let id = self.builtinID, let saved = self.savedBuiltinFraction {
+        _ = BuiltinBrightness.setFraction(saved, of: id)
+      }
+      self.savedBuiltinFraction = nil
+      self.calibrating = false
+      self.calibrationTargetID = nil
+      self.lastManualApplied = -1
+      self.lastAppliedFraction = -1
+    }
+  }
+
   // MARK: - Manual control (per-monitor sliders, external-only mode)
 
   func setManual(id: String, fraction: Double) {
@@ -202,9 +234,12 @@ final class SyncController {
     }
   }
 
-  /// Restore gamma before exit.
+  /// Restore gamma and any hardware color shift before exit.
   func shutdown() {
-    queue.sync { self.gamma.reset() }
+    queue.sync {
+      for display in self.externals { display.restoreColorHardware() }
+      self.gamma.reset()
+    }
   }
 
   // MARK: - Polling
@@ -293,6 +328,7 @@ final class SyncController {
     externals = DDC.externalDisplays()
     for display in externals {
       display.refreshMaxBrightness()
+      display.probeColorCapabilities()
       display.curve = profiles[display.id] ?? .default
     }
     lastAppliedFraction = -1
@@ -309,11 +345,69 @@ final class SyncController {
 
   /// Apply per-display color corrections keyed by ExternalDisplay.id. Runs on the
   /// serial queue; missing ids reset to identity. Safe after reconnect/wake.
-  func applyColorCorrections(_ map: [String: ColorCorrection]) {
+  /// Apply per-display color corrections. `viaHardware` routes the white-point
+  /// shift to the panel's DDC gain controls when available; pass `false` for live
+  /// previews (e.g. dragging a fine-tune slider) so we don't flood the monitor
+  /// with DDC writes — those stay on the instant gamma table.
+  // MARK: - 3×3 (ICC) color profiles
+
+  /// Color-sync display ids that currently carry a custom ICC profile (for restore).
+  private var installedProfileIDs: Set<String> = []
+
+  /// Install the full 3×3 color correction as a per-display ICC profile: read the
+  /// built-in's calibrated RGB→XYZ as the anchor, compose each external's measured
+  /// primaries onto it, and hand ColorSync the resulting profile. This corrects the
+  /// cross-channel/primary error a diagonal gamma can't (the residual RAW exposed).
+  /// The reference (built-in) keeps its factory profile. Idempotent.
+  func applyColorProfiles(samples: [String: PatchSamples], referenceID: String) {
     queue.async {
+      guard let refSamples = samples[referenceID], let bID = self.builtinID,
+            let pRef = DisplayProfileInstaller.referenceRGBtoXYZ(bID) else { return }
+      for display in self.externals {
+        guard let cg = display.cgDisplayID, let tgt = samples[display.id] else { continue }
+        guard let m = DisplayProfileMath.targetRGBtoXYZ(referenceRGBtoXYZ: pRef,
+                                                        referenceSamples: refSamples,
+                                                        targetSamples: tgt) else { continue }
+        if DisplayProfileInstaller.install(rgbToXYZ: m, gamma: (2.2, 2.2, 2.2),
+                                           onDisplay: cg, displayID: display.id) {
+          self.installedProfileIDs.insert(display.id)
+        }
+      }
+    }
+  }
+
+  /// Revert every display we gave a custom ICC profile back to its factory profile.
+  func clearColorProfiles() {
+    queue.async {
+      for display in self.externals where self.installedProfileIDs.contains(display.id) {
+        if let cg = display.cgDisplayID { DisplayProfileInstaller.restore(onDisplay: cg, displayID: display.id) }
+      }
+      self.installedProfileIDs.removeAll()
+    }
+  }
+
+  func applyColorCorrections(_ map: [String: ColorCorrection], viaHardware: Bool = true) {
+    queue.async {
+      // The built-in (reference) has no DDC, so its correction — used when matching
+      // brightness DOWN to a dimmer external dims the built-in — goes on the gamma
+      // table. Keyed "builtin" by the color-sync display list.
+      if let bID = self.builtinID {
+        self.gamma.setCorrection(bID, map["builtin"] ?? .identity)
+      }
       for display in self.externals {
         guard let cg = display.cgDisplayID else { continue }
-        self.gamma.setCorrection(cg, map[display.id] ?? .identity)
+        let target = map[display.id] ?? .identity
+        if viaHardware {
+          // Prefer the panel's own gain controls for the white-point shift; whatever
+          // it can't do in hardware (gamma, or the whole correction on monitors
+          // without color VCPs) comes back as the residual for the gamma table.
+          self.gamma.setCorrection(cg, display.applyColorCorrection(target))
+        } else {
+          // Preview: undo any committed hardware shift and render the full
+          // correction on the gamma table (fast, no DDC traffic).
+          display.restoreColorHardware()
+          self.gamma.setCorrection(cg, target)
+        }
       }
     }
   }

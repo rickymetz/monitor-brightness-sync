@@ -19,7 +19,16 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
   var onCalibrate: () -> Void = {}
   var onReset: () -> Void = {}
   var onColorSync: () -> Void = {}
+  var onSetColorSyncEnabled: (Bool) -> Void = { _ in }
+  var onSetMatchGamma: (Bool) -> Void = { _ in }
+  var onResetColorSync: () -> Void = {}
+  var onToggleTestField: () -> Void = {}
   var onClose: () -> Void = {}
+
+  /// Current color-sync state, set by the owner before showing the window.
+  var colorSyncEnabled = true
+  var matchGamma = false
+  var colorSyncSummary = "No color corrections saved yet."
   var onSetMonitorEnabled: (String, Bool) -> Void = { _, _ in }
   var onSetMonitorBrightness: (String, Double) -> Void = { _, _ in }
   var onSetHotkeysEnabled: (Bool) -> Void = { _ in }
@@ -44,6 +53,9 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
   private let keyControlSwitch = NSSwitch()
   private let loginSwitch = NSSwitch()
   private let hotkeysSwitch = NSSwitch()
+  private let colorSyncSwitch = NSSwitch()
+  private let matchGammaSwitch = NSSwitch()
+  private weak var colorSyncSummaryLabel: NSTextField?
   private let upRecorder = KeyRecorder()
   private let downRecorder = KeyRecorder()
 
@@ -241,6 +253,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
       ("Use brightness keys with lid closed", "Drive the external when the lid is closed.", keyControlSwitch,
        "When the lid is closed, the brightness keys adjust the external monitor (needs Accessibility permission)."),
     ])
+    y = caption(content, y, "Needs Accessibility permission (System Settings → Privacy & Security → Accessibility) — macOS only forwards the brightness keys to apps you've allowed.")
     y = sectionHeader(content, y, "Custom shortcuts")
     y = buildHotkeysCard(content, y)
     content.frame = NSRect(x: 0, y: 0, width: winW, height: y)
@@ -259,7 +272,46 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
     let colorSyncButton = footerButton("Color Sync (beta)…", #selector(colorSync))
     colorSyncButton.frame = NSRect(x: margin, y: y, width: 180, height: 30)
     content.addSubview(colorSyncButton)
-    y += 30 + 10
+    y += 30 + 12
+
+    // Apply toggle + reset for a saved color-sync correction.
+    let csLabel = NSTextField(labelWithString: "Apply color sync correction")
+    csLabel.frame = NSRect(x: margin, y: y + 3, width: 240, height: 18)
+    content.addSubview(csLabel)
+    colorSyncSwitch.state = colorSyncEnabled ? .on : .off
+    colorSyncSwitch.target = self
+    colorSyncSwitch.action = #selector(toggleColorSyncEnabled)
+    colorSyncSwitch.frame = NSRect(x: winW - margin - 40, y: y, width: 40, height: 22)
+    content.addSubview(colorSyncSwitch)
+    y += 30
+
+    let gammaLabel = NSTextField(labelWithString: "Match gamma (experimental)")
+    gammaLabel.frame = NSRect(x: margin, y: y + 3, width: 260, height: 18)
+    content.addSubview(gammaLabel)
+    matchGammaSwitch.state = matchGamma ? .on : .off
+    matchGammaSwitch.target = self
+    matchGammaSwitch.action = #selector(toggleMatchGamma)
+    matchGammaSwitch.frame = NSRect(x: winW - margin - 40, y: y, width: 40, height: 22)
+    content.addSubview(matchGammaSwitch)
+    y += 30
+
+    let csSummary = NSTextField(wrappingLabelWithString: colorSyncSummary)
+    csSummary.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    csSummary.textColor = .secondaryLabelColor
+    let summaryHeight = max(18, csSummary.sizeThatFits(NSSize(width: winW - 2 * margin, height: 400)).height)
+    csSummary.frame = NSRect(x: margin, y: y, width: winW - 2 * margin, height: summaryHeight)
+    content.addSubview(csSummary)
+    colorSyncSummaryLabel = csSummary
+    y += summaryHeight + 8
+
+    let resetCS = footerButton("Reset color sync", #selector(resetColorSyncTapped))
+    resetCS.frame = NSRect(x: margin, y: y, width: 160, height: 30)
+    content.addSubview(resetCS)
+    let testField = footerButton("Toggle test field (all displays)", #selector(toggleTestFieldTapped))
+    testField.frame = NSRect(x: margin + 170, y: y, width: 230, height: 30)
+    content.addSubview(testField)
+    y += 30 + 16
+
     let quit = footerButton("Quit Monitor Brightness Sync", #selector(quit))
     quit.frame = NSRect(x: margin, y: y, width: 240, height: 30)
     content.addSubview(quit)
@@ -515,6 +567,23 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
   @objc private func calibrate() { onCalibrate() }
   @objc private func reset() { onReset() }
   @objc private func colorSync() { onColorSync() }
+  @objc private func toggleColorSyncEnabled() {
+    colorSyncEnabled = colorSyncSwitch.state == .on
+    onSetColorSyncEnabled(colorSyncEnabled)
+  }
+  @objc private func resetColorSyncTapped() { onResetColorSync() }
+  @objc private func toggleTestFieldTapped() { onToggleTestField() }
+  @objc private func toggleMatchGamma() {
+    matchGamma = matchGammaSwitch.state == .on
+    onSetMatchGamma(matchGamma)
+  }
+
+  /// Update the color-sync summary live (after a Save/Reset), even if the General
+  /// tab is already on screen.
+  func setColorSyncSummary(_ text: String) {
+    colorSyncSummary = text
+    colorSyncSummaryLabel?.stringValue = text
+  }
   @objc private func quit() { NSApp.terminate(nil) }
 
   @objc private func monitorEnableChanged(_ sender: NSSwitch) {

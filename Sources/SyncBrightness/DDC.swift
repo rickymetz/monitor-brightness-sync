@@ -51,6 +51,17 @@ final class ExternalDisplay {
   private(set) var followsViaGamma = false
   private(set) var gammaFollowLevel = 1.0
 
+  /// Which DDC color controls this monitor answered when probed (gain/black level).
+  private(set) var colorCaps = DDCColor.Capabilities.none
+  /// The monitor's per-channel gain values at probe time — our restore point and
+  /// the baseline we scale a white-point correction from.
+  private(set) var gainBaseline: (r: UInt16, g: UInt16, b: UInt16) = (0, 0, 0)
+  private(set) var gainMax: UInt16 = 100
+  /// True once we've written non-baseline gains, so we know to restore them.
+  private var hardwareGainsModified = false
+  /// Last gain triple actually written, to skip redundant DDC traffic.
+  private var lastWrittenGains: (r: UInt16, g: UInt16, b: UInt16)?
+
   var info: DisplayInfo { DisplayInfo(id: id, name: name) }
   var currentFraction: Double { followsViaGamma ? gammaFollowLevel : (lastSetFraction ?? 0) }
 
@@ -100,6 +111,70 @@ final class ExternalDisplay {
        let fraction = BuiltinBrightness.fraction(of: cgID), fraction > 0 {
       lastSetFraction = fraction
     }
+  }
+
+  // MARK: - Color (white-point) over DDC
+
+  /// Probe the optional MCCS color controls (gain 0x16/0x18/0x1A, black level
+  /// 0x6C/0x6E/0x70). Read-only and scan-time only, so it can retry like
+  /// `refreshMaxBrightness`; flooding never happens on the hot path. Records the
+  /// current gains as the baseline/restore point when gain is supported.
+  func probeColorCapabilities() {
+    var caps = DDCColor.Capabilities.none
+    let r = DDC.read(service: service, command: DDCColor.redGain, retries: 3)
+    let g = DDC.read(service: service, command: DDCColor.greenGain, retries: 3)
+    let b = DDC.read(service: service, command: DDCColor.blueGain, retries: 3)
+    if let r, let g, let b, r.max > 0, g.max > 0, b.max > 0 {
+      caps.gain = true
+      gainBaseline = (r.current, g.current, b.current)
+      gainMax = r.max
+    }
+    // Black level is probed for capability only (future lift correction); we don't
+    // write it yet because we don't measure per-channel black.
+    caps.blackLevel = DDCColor.blackLevelCodes.allSatisfy {
+      (DDC.read(service: service, command: $0, retries: 2)?.max ?? 0) > 0
+    }
+    colorCaps = caps
+  }
+
+  /// Apply a color correction, preferring the panel's own gain controls for the
+  /// white-point shift. Returns the RESIDUAL correction the caller should still
+  /// put on the gamma table: when hardware handled the gains, only the per-channel
+  /// `gamma` remains (there is no MCCS gamma code); otherwise the full correction
+  /// falls back to the gamma table. Writes are single-cycle / no-retry — gentle.
+  @discardableResult
+  func applyColorCorrection(_ c: ColorCorrection) -> ColorCorrection {
+    guard colorCaps.gain else { return c }   // no hardware path → full gamma-table correction
+    if !DDCColor.hasGainShift(c) {
+      restoreColorHardware()                 // identity/neutral → undo any prior hardware shift
+      return c
+    }
+    let v = DDCColor.gainValues(correction: c, baseline: gainBaseline, maxValue: gainMax)
+    if writeGains(v) {
+      hardwareGainsModified = true
+      return ColorCorrection(redGain: 1, greenGain: 1, blueGain: 1, gamma: c.gamma)
+    }
+    return c                                 // hardware write refused → fall back to gamma table
+  }
+
+  /// Restore the panel's gains to their probed baseline (call on identity, quit,
+  /// or color-sync reset). No-op if we never changed them.
+  func restoreColorHardware() {
+    guard hardwareGainsModified else { return }
+    _ = writeGains(gainBaseline)
+    hardwareGainsModified = false
+  }
+
+  @discardableResult
+  private func writeGains(_ v: (r: UInt16, g: UInt16, b: UInt16)) -> Bool {
+    // Skip redundant traffic — slider previews never reach hardware (see
+    // SyncController), but wake/reconnect re-applies the same values repeatedly.
+    if let last = lastWrittenGains, last == v { return true }
+    let okR = DDC.write(service: service, command: DDCColor.redGain, value: v.r, retries: 0)
+    let okG = DDC.write(service: service, command: DDCColor.greenGain, value: v.g, retries: 0)
+    let okB = DDC.write(service: service, command: DDCColor.blueGain, value: v.b, retries: 0)
+    if okR && okG && okB { lastWrittenGains = v }
+    return okR && okG && okB
   }
 
   /// Set brightness from a 0...1 fraction of the monitor's own range. When

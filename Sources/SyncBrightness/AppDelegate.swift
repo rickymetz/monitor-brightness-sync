@@ -67,7 +67,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var profiles: [String: BrightnessCurve] = [:]
 
   private let colorProfilesKey = "colorCorrectionProfiles"
+  private let colorSyncEnabledKey = "colorSyncEnabled"
   private var colorCorrections: [String: ColorCorrection] = [:]
+
+  // 3×3 (ICC) path: the saved measurements drive a per-display ICC profile. ColorSync
+  // keeps an installed profile across launches, so this is a persistent calibration —
+  // we re-assert it on launch and restore factory on reset/disable.
+  private let colorMeasurementKey = "colorSyncMeasurement"
+  private var colorMeasurement: ColorSyncMeasurement?
+
+  private func loadColorMeasurement() -> ColorSyncMeasurement? {
+    guard let data = UserDefaults.standard.data(forKey: colorMeasurementKey) else { return nil }
+    return try? JSONDecoder().decode(ColorSyncMeasurement.self, from: data)
+  }
+
+  /// Install the ICC profiles when enabled and we have a measurement; otherwise revert
+  /// every corrected display to factory. The single funnel for the 3×3 color path.
+  private func applyColorProfiles() {
+    if colorSyncEnabled, let m = colorMeasurement {
+      sync.applyColorProfiles(samples: m.samples, referenceID: m.referenceID)
+    } else {
+      sync.clearColorProfiles()
+    }
+  }
+
+  /// Persist a fresh measurement and install its ICC profiles (called from Save).
+  private func saveColorMeasurement(_ m: ColorSyncMeasurement) {
+    colorMeasurement = m
+    if let data = try? JSONEncoder().encode(m) {
+      UserDefaults.standard.set(data, forKey: colorMeasurementKey)
+    }
+    // The 3×3 ICC profile supersedes the diagonal gamma-table color path; clear any
+    // old diagonal corrections so the two can't compound on the externals.
+    colorCorrections = [:]
+    UserDefaults.standard.removeObject(forKey: colorProfilesKey)
+    colorSyncEnabled = true
+    sync.applyColorCorrections(effectiveColorCorrections)   // identity → clean gamma table
+    applyColorProfiles()
+    controlWindowController?.setColorSyncSummary(colorSyncSummaryText())
+  }
+
+  private var colorSyncEnabled: Bool {
+    get { UserDefaults.standard.object(forKey: colorSyncEnabledKey) == nil ? true
+                                                                            : UserDefaults.standard.bool(forKey: colorSyncEnabledKey) }
+    set { UserDefaults.standard.set(newValue, forKey: colorSyncEnabledKey) }
+  }
+
+  private let matchGammaKey = "colorSyncMatchGamma"
+  /// Apply the per-display gamma term. Off by default — it can wash out mid-tones;
+  /// white-point matching is the dependable part.
+  private var matchGamma: Bool {
+    get { UserDefaults.standard.bool(forKey: matchGammaKey) }   // default false
+    set { UserDefaults.standard.set(newValue, forKey: matchGammaKey) }
+  }
+
+  /// What's actually applied: nothing when disabled; otherwise the saved
+  /// corrections, with the gamma term stripped unless gamma matching is on.
+  private var effectiveColorCorrections: [String: ColorCorrection] {
+    guard colorSyncEnabled else { return [:] }
+    if matchGamma { return colorCorrections }
+    return colorCorrections.mapValues {
+      ColorCorrection(redGain: $0.redGain, greenGain: $0.greenGain, blueGain: $0.blueGain, gamma: 1)
+    }
+  }
+
+  private func setMatchGamma(_ on: Bool) {
+    matchGamma = on
+    sync.applyColorCorrections(effectiveColorCorrections)
+  }
 
   private func loadColorCorrections() -> [String: ColorCorrection] {
     guard let data = UserDefaults.standard.data(forKey: colorProfilesKey),
@@ -81,7 +148,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     if let data = try? JSONEncoder().encode(map) {
       UserDefaults.standard.set(data, forKey: colorProfilesKey)
     }
-    sync.applyColorCorrections(colorCorrections)
+    colorSyncEnabled = true   // a fresh save implies "apply it"
+    sync.applyColorCorrections(effectiveColorCorrections)
+    controlWindowController?.setColorSyncSummary(colorSyncSummaryText())
+  }
+
+  /// Live toggle: apply the saved correction or revert to identity (for A/B).
+  private func setColorSyncEnabled(_ on: Bool) {
+    colorSyncEnabled = on
+    sync.applyColorCorrections(effectiveColorCorrections)
+    applyColorProfiles()   // install/restore the 3×3 ICC profiles to match
+  }
+
+  /// Clear the saved correction entirely and revert the displays.
+  private func resetColorSync() {
+    colorCorrections = [:]
+    colorMeasurement = nil
+    UserDefaults.standard.removeObject(forKey: colorProfilesKey)
+    UserDefaults.standard.removeObject(forKey: colorMeasurementKey)
+    sync.applyColorCorrections([:])
+    sync.clearColorProfiles()   // revert displays to factory ICC profiles
+    controlWindowController?.setColorSyncSummary(colorSyncSummaryText())
+  }
+
+  /// Human-readable summary of the saved correction, for the settings window.
+  private func colorSyncSummaryText() -> String {
+    guard let m = colorMeasurement, !m.samples.isEmpty else { return "No color corrections saved yet." }
+    var names: [String: String] = ["builtin": "Built-in"]
+    for e in sync.snapshotExternals() { names[e.id] = e.name }
+    let corrected = m.samples.keys.filter { $0 != m.referenceID }.sorted()
+    let list = corrected.map { names[$0] ?? $0 }.joined(separator: ", ")
+    let anchor = names[m.referenceID] ?? m.referenceID
+    return "3×3 color match (ICC) active.\nAnchored on \(anchor); corrected: \(list.isEmpty ? "—" : list)."
   }
 
   private let disabledKey = "disabledMonitors"
@@ -112,6 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     profiles = loadProfiles()
     colorCorrections = loadColorCorrections()
+    colorMeasurement = loadColorMeasurement()
     disabledIDs = Set(UserDefaults.standard.stringArray(forKey: disabledKey) ?? [])
     hotkeyUp = loadCombo(hotkeyUpKey) ?? .defaultUp
     hotkeyDown = loadCombo(hotkeyDownKey) ?? .defaultDown
@@ -132,7 +231,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       self.monitors = monitors
       self.controlWindowController?.updateMonitors(monitors)
       self.renderStatus()
-      self.sync.applyColorCorrections(self.colorCorrections)
+      self.sync.applyColorCorrections(self.effectiveColorCorrections)
+      // A monitor was (un)plugged while the Color Sync window is open — refresh its
+      // display list so a just-connected display (e.g. the Dell) is included.
+      self.colorSyncWC?.refreshDisplays(self.buildColorSyncDisplayList())
     }
     sync.onExternalChangedExternally = { [weak self] _ in
       // The monitor's brightness moved outside the app (its own buttons): drop
@@ -145,8 +247,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     sync.setAllowBlackout(allowBlackout)
     sync.setDisabled(disabledIDs)
     sync.setProfiles(profiles)
-    sync.applyColorCorrections(colorCorrections)
+    sync.applyColorCorrections(effectiveColorCorrections)
     sync.start()
+    applyColorProfiles()   // re-assert the saved 3×3 ICC calibration after displays enumerate
 
     setupWakeObservers()
     setupMediaKeyTap()
@@ -388,6 +491,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       controller.onCalibrate = { [weak self] in self?.openCalibration() }
       controller.onReset = { [weak self] in self?.resetCalibration() }
       controller.onColorSync = { [weak self] in self?.openColorSync() }
+      controller.onSetColorSyncEnabled = { [weak self] on in self?.setColorSyncEnabled(on) }
+      controller.onSetMatchGamma = { [weak self] on in self?.setMatchGamma(on) }
+      controller.onResetColorSync = { [weak self] in self?.resetColorSync() }
+      controller.onToggleTestField = { [weak self] in self?.toggleTestField() }
       controller.onSetMonitorEnabled = { [weak self] id, enabled in self?.setMonitorEnabled(id, enabled) }
       controller.onSetMonitorBrightness = { [weak self] id, fraction in self?.sync.setManual(id: id, fraction: fraction) }
       controller.onSetHotkeysEnabled = { [weak self] on in self?.setHotkeysEnabled(on) }
@@ -401,6 +508,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     controlVisible = true
     updateActivationPolicy()
+    controlWindowController?.colorSyncEnabled = colorSyncEnabled
+    controlWindowController?.matchGamma = matchGamma
+    controlWindowController?.colorSyncSummary = colorSyncSummaryText()
     controlWindowController?.updateMonitors(monitors)
     controlWindowController?.show()
     pushToggleStates()
@@ -479,16 +589,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     guard colorSyncWC == nil else { colorSyncWC?.showWindow(nil); return }
     let wc = ColorSyncWindowController()
     wc.displays = buildColorSyncDisplayList()
-    wc.onPreview = { [weak self] map in self?.sync.applyColorCorrections(map) }  // apply live, do NOT persist
+    wc.onPreview = { [weak self] map in self?.sync.applyColorCorrections(map, viaHardware: false) }  // live, gamma-only, no persist
     wc.onSave = { [weak self] map in self?.saveColorCorrections(map) }           // persist + apply
+    // 3×3 (ICC) path: install from the just-measured samples (preview), or persist+install (save).
+    wc.onApplyProfiles = { [weak self] samples, refID in
+      self?.sync.applyColorProfiles(samples: samples, referenceID: refID)
+    }
+    wc.onSaveProfiles = { [weak self] samples, refID in
+      self?.saveColorMeasurement(ColorSyncMeasurement(referenceID: refID, samples: samples))
+    }
+    wc.onClearProfiles = { [weak self] in self?.sync.clearColorProfiles() }   // "Before" A/B
+    wc.onShowTestField = { [weak self] in self?.showTestField() }
+    wc.onHideTestField = { [weak self] in self?.hideTestField() }
     wc.onClose = { [weak self] in
       guard let self else { return }
       self.colorSyncWC = nil
-      // Discard any unsaved preview: revert displays to the last persisted state.
-      self.sync.applyColorCorrections(self.colorCorrections)
+      self.hideTestField()
+      // Restore brightness + resume sync, and revert displays to the saved state
+      // (discarding any unsaved preview).
+      self.sync.endFixedBrightness()
+      self.sync.applyColorCorrections(self.effectiveColorCorrections)
+      self.applyColorProfiles()   // back to the saved ICC calibration (or factory)
     }
+    // Measure the displays uncorrected: clear the gamma-table correction AND revert any
+    // installed ICC profile so the camera sees each panel's native color. Cancelling
+    // restores the saved state via onClose.
+    sync.applyColorCorrections([:])
+    sync.clearColorProfiles()
+    // Hold every display at a known, clip-safe brightness (50%) so each is
+    // measured at the same backlight operating point. Restored in onClose.
+    sync.beginFixedBrightness(0.5)
     wc.begin()
     colorSyncWC = wc
+  }
+
+  // MARK: - Side-by-side test field (debug)
+
+  private var testFieldWindows: [NSWindow] = []
+
+  /// Toggle a uniform mid-gray field on every display, so the iOS side-by-side
+  /// check has a clean target. The displayed field passes through the gamma
+  /// correction, so toggling "Apply color sync correction" lets you A/B it.
+  /// Dismiss by clicking anywhere on it or pressing Escape (it covers the
+  /// Settings window, so the toggle button isn't reachable while it's up).
+  private func toggleTestField() {
+    if testFieldWindows.isEmpty { showTestField() } else { hideTestField() }
+  }
+
+  private func showTestField() {
+    guard testFieldWindows.isEmpty else { return }   // already showing
+    for (i, screen) in NSScreen.screens.enumerated() {
+      let w = TestFieldWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+      w.level = .screenSaver
+      w.isOpaque = true
+      w.onDismiss = { [weak self] in self?.hideTestField() }
+      let view = TestFieldView(frame: NSRect(origin: .zero, size: screen.frame.size))
+      view.label = String(UnicodeScalar(UInt8(65 + min(i, 25))))   // A, B, C…
+      view.onDismiss = { [weak self] in self?.hideTestField() }
+      w.contentView = view
+      w.setFrame(screen.frame, display: true)
+      w.makeKeyAndOrderFront(nil)
+      testFieldWindows.append(w)
+    }
+    NSApp.activate(ignoringOtherApps: true)   // so Escape reaches the key window
+  }
+
+  private func hideTestField() {
+    testFieldWindows.forEach { $0.orderOut(nil) }
+    testFieldWindows.removeAll()
   }
 
   /// Built-in first (reference), then externals; pair each NSScreen to a display id.
@@ -672,5 +840,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     statusItem.button?.attributedTitle = NSAttributedString(string: badge, attributes: [.font: font])
     statusItem.button?.setAccessibilityLabel("Monitor Brightness Sync — \(title)") // VoiceOver reads status, not the badge glyphs
     controlWindowController?.update(statusText: title, syncOn: isEnabled)
+  }
+}
+
+/// Fullscreen test-field window that dismisses on Escape (it can become key so it
+/// receives the keystroke).
+private final class TestFieldWindow: NSWindow {
+  var onDismiss: (() -> Void)?
+  override var canBecomeKey: Bool { true }
+  override func cancelOperation(_ sender: Any?) { onDismiss?() }   // Escape
+}
+
+/// Mid-gray fill with a corner label (A/B/…) that dismisses on a click anywhere.
+/// The label sits in the corners so the center stays a clean field to sample.
+private final class TestFieldView: NSView {
+  var onDismiss: (() -> Void)?
+  var label = ""
+  override var acceptsFirstResponder: Bool { true }
+  override func mouseDown(with event: NSEvent) { onDismiss?() }
+
+  override func draw(_ dirtyRect: NSRect) {
+    NSColor(white: 0.5, alpha: 1).setFill(); bounds.fill()
+    guard !label.isEmpty else { return }
+    let attrs: [NSAttributedString.Key: Any] = [
+      .font: NSFont.boldSystemFont(ofSize: 120),
+      .foregroundColor: NSColor(white: 0.25, alpha: 1),
+    ]
+    let s = label as NSString
+    let size = s.size(withAttributes: attrs)
+    let inset: CGFloat = 60
+    // Draw in all four corners so it's visible however the phone is angled.
+    for p in [NSPoint(x: inset, y: inset),
+              NSPoint(x: bounds.maxX - size.width - inset, y: inset),
+              NSPoint(x: inset, y: bounds.maxY - size.height - inset),
+              NSPoint(x: bounds.maxX - size.width - inset, y: bounds.maxY - size.height - inset)] {
+      s.draw(at: p, withAttributes: attrs)
+    }
   }
 }

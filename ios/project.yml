@@ -1,0 +1,41 @@
+name: MBSync
+options:
+  bundleIdPrefix: com.rick
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  MBSync:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: ../Sources/SyncBrightness/ColorCorrection.swift
+      - path: ../Sources/SyncBrightness/DeltaE.swift
+      - path: ../Sources/SyncBrightness/BayerField.swift
+      - path: ../Sources/SyncBrightness/AmbientBias.swift
+      - path: ../Sources/SyncBrightness/ColorSyncMessages.swift
+      - path: ../Sources/SyncBrightness/PatchCardLayout.swift
+      - path: ../Sources/SyncBrightness/PatchCardAnalyzer.swift
+      - path: ../Sources/SyncBrightness/PairingPayload.swift
+      - path: ../Sources/SyncBrightness/FrameCodec.swift
+      - path: ../Sources/SyncBrightness/CaptureGate.swift
+      - path: ../Sources/SyncBrightness/FieldSampler.swift
+      - path: ../Sources/SyncBrightness/SideBySideMetric.swift
+    info:
+      path: Info.plist
+      properties:
+        NSCameraUsageDescription: "Used to photograph each display's calibration card to match colors."
+        NSLocalNetworkUsageDescription: "Used to connect to your Mac to coordinate color matching."
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+          UIImageName: LaunchLogo
+          UIImageRespectsSafeAreaInsets: true
+        CFBundleURLTypes:
+          - CFBundleURLName: com.rick.mbsync.pair
+            CFBundleURLSchemes: [mbsync]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rick.mbsync
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

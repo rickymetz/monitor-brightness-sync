@@ -27,3 +27,12 @@ struct PatchSamples: Equatable, Codable {
   var green: RGB
   var blue: RGB
 }
+
+/// A whole color-sync session's measurements, persisted so the 3×3 (ICC) correction
+/// can be re-installed on launch and restored on reset. `samples` is keyed by the
+/// color-sync display id ("builtin" + each external's id); `referenceID` names the
+/// anchor display (the built-in, whose factory profile is trusted as ground truth).
+struct ColorSyncMeasurement: Equatable, Codable {
+  var referenceID: String
+  var samples: [String: PatchSamples]
+}

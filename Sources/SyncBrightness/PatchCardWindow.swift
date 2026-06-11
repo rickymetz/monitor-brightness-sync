@@ -3,7 +3,7 @@ import Cocoa
 final class PatchCardWindow {
   private var window: NSWindow?
 
-  enum Content { case midGray, patchCard }
+  enum Content: Equatable { case solid(Double), color(RGB), dark, patchCard }
 
   func show(_ content: Content, on screen: NSScreen) {
     let w = window ?? makeWindow(on: screen)
@@ -30,8 +30,16 @@ private final class PatchCardView: NSView {
   var content: PatchCardWindow.Content = .patchCard
 
   override func draw(_ dirty: NSRect) {
-    if content == .midGray {
-      NSColor(white: 0.5, alpha: 1).setFill(); bounds.fill(); return
+    switch content {
+    case .solid(let level):
+      NSColor(white: CGFloat(max(0, min(1, level))), alpha: 1).setFill(); bounds.fill(); return
+    case .color(let c):
+      NSColor(red: CGFloat(max(0, min(1, c.r))), green: CGFloat(max(0, min(1, c.g))),
+              blue: CGFloat(max(0, min(1, c.b))), alpha: 1).setFill(); bounds.fill(); return
+    case .dark:
+      NSColor.black.setFill(); bounds.fill(); return
+    case .patchCard:
+      break
     }
     NSColor.black.setFill(); bounds.fill()
     let m: CGFloat = 64

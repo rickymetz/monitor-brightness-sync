@@ -37,10 +37,35 @@ final class ColorSyncTransport: ColorSyncPeer {
     let params = NWParameters(tls: opts)
     let listener = try NWListener(using: params)
     self.listener = listener
+    // `listener.port` reports 0 ("unassigned") until the OS binds an ephemeral
+    // port at `.ready`, so wait on the state rather than polling the port — and
+    // surface a startup failure instead of swallowing it (an empty handler here
+    // is what made an earlier bug undiagnosable).
+    let ready = DispatchSemaphore(value: 0)
+    var startupError: Error?
+    listener.stateUpdateHandler = { state in
+      switch state {
+      case .ready: ready.signal()
+      case .failed(let error): startupError = error; ready.signal()
+      case .waiting(let error): startupError = error  // may still recover; kept for diagnostics
+      default: break
+      }
+    }
     listener.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
     listener.start(queue: queue)
-    for _ in 0..<100 { if let p = listener.port?.rawValue { port = p; break }; usleep(10_000) }
-    guard port != 0 else { throw TransportError.portUnavailable }
+    if ready.wait(timeout: .now() + 5) == .timedOut {
+      listener.cancel()
+      throw startupError ?? TransportError.portUnavailable
+    }
+    if let error = startupError, listener.port == nil {
+      listener.cancel()
+      throw error
+    }
+    guard let assigned = listener.port?.rawValue, assigned != 0 else {
+      listener.cancel()
+      throw TransportError.portUnavailable
+    }
+    port = assigned
     let host = CalibrationHost.lanIPv4() ?? "127.0.0.1"
     return ConnectionInfo(host: host, port: port, psk: psk)
   }
