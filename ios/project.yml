@@ -26,7 +26,10 @@ targets:
       properties:
         NSCameraUsageDescription: "Used to photograph each display's calibration card to match colors."
         NSLocalNetworkUsageDescription: "Used to connect to your Mac to coordinate color matching."
-        UILaunchScreen: {}
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+          UIImageName: LaunchLogo
+          UIImageRespectsSafeAreaInsets: true
         CFBundleURLTypes:
           - CFBundleURLName: com.rick.mbsync.pair
             CFBundleURLSchemes: [mbsync]

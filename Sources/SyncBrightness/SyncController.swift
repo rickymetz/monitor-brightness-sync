@@ -349,6 +349,43 @@ final class SyncController {
   /// shift to the panel's DDC gain controls when available; pass `false` for live
   /// previews (e.g. dragging a fine-tune slider) so we don't flood the monitor
   /// with DDC writes — those stay on the instant gamma table.
+  // MARK: - 3×3 (ICC) color profiles
+
+  /// Color-sync display ids that currently carry a custom ICC profile (for restore).
+  private var installedProfileIDs: Set<String> = []
+
+  /// Install the full 3×3 color correction as a per-display ICC profile: read the
+  /// built-in's calibrated RGB→XYZ as the anchor, compose each external's measured
+  /// primaries onto it, and hand ColorSync the resulting profile. This corrects the
+  /// cross-channel/primary error a diagonal gamma can't (the residual RAW exposed).
+  /// The reference (built-in) keeps its factory profile. Idempotent.
+  func applyColorProfiles(samples: [String: PatchSamples], referenceID: String) {
+    queue.async {
+      guard let refSamples = samples[referenceID], let bID = self.builtinID,
+            let pRef = DisplayProfileInstaller.referenceRGBtoXYZ(bID) else { return }
+      for display in self.externals {
+        guard let cg = display.cgDisplayID, let tgt = samples[display.id] else { continue }
+        guard let m = DisplayProfileMath.targetRGBtoXYZ(referenceRGBtoXYZ: pRef,
+                                                        referenceSamples: refSamples,
+                                                        targetSamples: tgt) else { continue }
+        if DisplayProfileInstaller.install(rgbToXYZ: m, gamma: (2.2, 2.2, 2.2),
+                                           onDisplay: cg, displayID: display.id) {
+          self.installedProfileIDs.insert(display.id)
+        }
+      }
+    }
+  }
+
+  /// Revert every display we gave a custom ICC profile back to its factory profile.
+  func clearColorProfiles() {
+    queue.async {
+      for display in self.externals where self.installedProfileIDs.contains(display.id) {
+        if let cg = display.cgDisplayID { DisplayProfileInstaller.restore(onDisplay: cg, displayID: display.id) }
+      }
+      self.installedProfileIDs.removeAll()
+    }
+  }
+
   func applyColorCorrections(_ map: [String: ColorCorrection], viaHardware: Bool = true) {
     queue.async {
       // The built-in (reference) has no DDC, so its correction — used when matching

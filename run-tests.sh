@@ -62,4 +62,17 @@ run_check ambient-checks \
   Sources/SyncBrightness/AmbientBias.swift \
   Tests/AmbientChecks/main.swift
 
+run_check profile-math-checks \
+  Sources/SyncBrightness/ColorCorrection.swift \
+  Sources/SyncBrightness/Matrix3.swift \
+  Sources/SyncBrightness/DisplayProfileMath.swift \
+  Tests/ProfileMathChecks/main.swift
+
+run_check profile-icc-checks \
+  -framework CoreGraphics \
+  Sources/SyncBrightness/ColorCorrection.swift \
+  Sources/SyncBrightness/Matrix3.swift \
+  Sources/SyncBrightness/ICCProfileBuilder.swift \
+  Tests/ProfileICCChecks/main.swift
+
 exit "$status"

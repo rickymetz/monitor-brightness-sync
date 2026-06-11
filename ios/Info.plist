@@ -34,6 +34,13 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Used to connect to your Mac to coordinate color matching.</string>
 	<key>UILaunchScreen</key>
-	<dict/>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+		<key>UIImageName</key>
+		<string>LaunchLogo</string>
+		<key>UIImageRespectsSafeAreaInsets</key>
+		<true/>
+	</dict>
 </dict>
 </plist>

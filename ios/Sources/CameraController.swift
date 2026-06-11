@@ -78,49 +78,32 @@ final class CameraController: NSObject, ObservableObject {
     }
   }
 
-  /// Enumerate RAW formats. The available list is mutually exclusive by ProRAW
-  /// state (disabled → Bayer formats, enabled → ProRAW formats), so we toggle to
-  /// see both. Prefer Bayer (linear, near-sensor, no fusion); fall back to ProRAW
-  /// (still a linear DNG — fine for a flat field). Reports everything to the log.
-  private func discoverRawFormat() {
-    var bayerFmts: [OSType] = []
-    var proRawFmts: [OSType] = []
+  /// Enumerate RAW formats. ProRAW is left OFF (pinned in `start()`), so the list
+  /// is the device's **Bayer** formats — exactly what we want (linear, near-sensor,
+  /// no fusion). We deliberately DON'T toggle `isAppleProRAWEnabled` to also probe
+  /// the ProRAW list: the begin/commitConfiguration churn that toggling requires
+  /// leaves `availableRawPhotoPixelFormatTypes` transiently EMPTY, which made every
+  /// capture miss RAW (`no-raw(0)`) even though Bayer was available. Reading the
+  /// stable list once keeps it populated through capture.
+  private func discoverRawFormat(_ label: String = "probe") {
     var proRawSupported = false
-
-    if #available(iOS 14.3, *) {
-      proRawSupported = photoOutput.isAppleProRAWSupported
-      if photoOutput.isAppleProRAWEnabled { setProRAW(false) }
-      bayerFmts = photoOutput.availableRawPhotoPixelFormatTypes
-      if proRawSupported {
-        setProRAW(true)
-        proRawFmts = photoOutput.availableRawPhotoPixelFormatTypes
-      }
-    } else {
-      bayerFmts = photoOutput.availableRawPhotoPixelFormatTypes
-    }
+    let bayerFmts = photoOutput.availableRawPhotoPixelFormatTypes
+    if #available(iOS 14.3, *) { proRawSupported = photoOutput.isAppleProRAWSupported }
 
     if let b = bayerFmts.first {
-      if #available(iOS 14.3, *) { setProRAW(false) }   // Bayer needs ProRAW off
       rawPixelFormat = b; rawAvailable = true; rawIsProRAW = false
-    } else if let p = proRawFmts.first {
-      rawPixelFormat = p; rawAvailable = true; rawIsProRAW = true   // keep ProRAW on
     }
-    rawFormatCount = bayerFmts.count + proRawFmts.count
+    rawFormatCount = bayerFmts.count
 
     let preset = session.sessionPreset.rawValue
     let bStr = bayerFmts.map { Self.fourCC($0) }.joined(separator: ",")
-    let pStr = proRawFmts.map { Self.fourCC($0) }.joined(separator: ",")
-    let chosen = rawAvailable ? (rawIsProRAW ? "proraw" : "bayer") : "none"
-    let diag = "raw-probe preset=\(preset) proRawSupported=\(proRawSupported) bayer=[\(bStr)] proraw=[\(pStr)] chosen=\(chosen)"
+    let dim = device.map { d -> String in
+      let d2 = CMVideoFormatDescriptionGetDimensions(d.activeFormat.formatDescription)
+      return "\(d2.width)x\(d2.height)"
+    } ?? "—"
+    let chosen = rawAvailable ? "bayer" : "none"
+    let diag = "raw-\(label) preset=\(preset) proRawSupported=\(proRawSupported) bayer=[\(bStr)] count=\(bayerFmts.count) chosen=\(chosen) activeFmt=\(dim)"
     DispatchQueue.main.async { self.onDiagnostics?(diag) }
-  }
-
-  @available(iOS 14.3, *)
-  private func setProRAW(_ on: Bool) {
-    guard photoOutput.isAppleProRAWSupported, photoOutput.isAppleProRAWEnabled != on else { return }
-    session.beginConfiguration()
-    photoOutput.isAppleProRAWEnabled = on
-    session.commitConfiguration()
   }
 
   func stop() { session.stopRunning() }
@@ -137,6 +120,19 @@ final class CameraController: NSObject, ObservableObject {
     }
     if device.isFocusModeSupported(.locked) { device.focusMode = .locked }
     device.unlockForConfiguration()
+    discoverRawFormat("postlock")
+    // RAW photo capture requires the `.photo` preset AND a RAW-capable active format.
+    // As AE/AWB settle under `.photo`, the session auto-switches to a non-RAW format
+    // (postlock shows bayer=[]). Now that exposure is LOCKED (AE can't re-converge),
+    // re-commit the `.photo` preset to bounce the session back to its default
+    // RAW-capable photo format; it then stays put. Pinning via `device.activeFormat`
+    // is NOT an option — it forces input-priority, which disables RAW entirely.
+    if photoOutput.availableRawPhotoPixelFormatTypes.isEmpty {
+      session.beginConfiguration()
+      if session.canSetSessionPreset(.photo) { session.sessionPreset = .photo }
+      session.commitConfiguration()
+      discoverRawFormat("postcommit")
+    }
   }
 
   func enableAutofocus() {

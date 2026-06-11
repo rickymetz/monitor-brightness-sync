@@ -70,6 +70,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let colorSyncEnabledKey = "colorSyncEnabled"
   private var colorCorrections: [String: ColorCorrection] = [:]
 
+  // 3×3 (ICC) path: the saved measurements drive a per-display ICC profile. ColorSync
+  // keeps an installed profile across launches, so this is a persistent calibration —
+  // we re-assert it on launch and restore factory on reset/disable.
+  private let colorMeasurementKey = "colorSyncMeasurement"
+  private var colorMeasurement: ColorSyncMeasurement?
+
+  private func loadColorMeasurement() -> ColorSyncMeasurement? {
+    guard let data = UserDefaults.standard.data(forKey: colorMeasurementKey) else { return nil }
+    return try? JSONDecoder().decode(ColorSyncMeasurement.self, from: data)
+  }
+
+  /// Install the ICC profiles when enabled and we have a measurement; otherwise revert
+  /// every corrected display to factory. The single funnel for the 3×3 color path.
+  private func applyColorProfiles() {
+    if colorSyncEnabled, let m = colorMeasurement {
+      sync.applyColorProfiles(samples: m.samples, referenceID: m.referenceID)
+    } else {
+      sync.clearColorProfiles()
+    }
+  }
+
+  /// Persist a fresh measurement and install its ICC profiles (called from Save).
+  private func saveColorMeasurement(_ m: ColorSyncMeasurement) {
+    colorMeasurement = m
+    if let data = try? JSONEncoder().encode(m) {
+      UserDefaults.standard.set(data, forKey: colorMeasurementKey)
+    }
+    // The 3×3 ICC profile supersedes the diagonal gamma-table color path; clear any
+    // old diagonal corrections so the two can't compound on the externals.
+    colorCorrections = [:]
+    UserDefaults.standard.removeObject(forKey: colorProfilesKey)
+    colorSyncEnabled = true
+    sync.applyColorCorrections(effectiveColorCorrections)   // identity → clean gamma table
+    applyColorProfiles()
+    controlWindowController?.setColorSyncSummary(colorSyncSummaryText())
+  }
+
   private var colorSyncEnabled: Bool {
     get { UserDefaults.standard.object(forKey: colorSyncEnabledKey) == nil ? true
                                                                             : UserDefaults.standard.bool(forKey: colorSyncEnabledKey) }
@@ -120,29 +157,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private func setColorSyncEnabled(_ on: Bool) {
     colorSyncEnabled = on
     sync.applyColorCorrections(effectiveColorCorrections)
+    applyColorProfiles()   // install/restore the 3×3 ICC profiles to match
   }
 
   /// Clear the saved correction entirely and revert the displays.
   private func resetColorSync() {
     colorCorrections = [:]
+    colorMeasurement = nil
     UserDefaults.standard.removeObject(forKey: colorProfilesKey)
+    UserDefaults.standard.removeObject(forKey: colorMeasurementKey)
     sync.applyColorCorrections([:])
+    sync.clearColorProfiles()   // revert displays to factory ICC profiles
     controlWindowController?.setColorSyncSummary(colorSyncSummaryText())
   }
 
   /// Human-readable summary of the saved correction, for the settings window.
   private func colorSyncSummaryText() -> String {
-    guard !colorCorrections.isEmpty else { return "No color corrections saved yet." }
+    guard let m = colorMeasurement, !m.samples.isEmpty else { return "No color corrections saved yet." }
     var names: [String: String] = ["builtin": "Built-in"]
     for e in sync.snapshotExternals() { names[e.id] = e.name }
-    let lines = colorCorrections
-      .sorted { ($0.key) < ($1.key) }
-      .map { id, c -> String in
-        let name = names[id] ?? id
-        return String(format: "%@:  R %.2f  G %.2f  B %.2f  γ %.2f",
-                      name, c.redGain, c.greenGain, c.blueGain, c.gamma)
-      }
-    return lines.joined(separator: "\n")
+    let corrected = m.samples.keys.filter { $0 != m.referenceID }.sorted()
+    let list = corrected.map { names[$0] ?? $0 }.joined(separator: ", ")
+    let anchor = names[m.referenceID] ?? m.referenceID
+    return "3×3 color match (ICC) active.\nAnchored on \(anchor); corrected: \(list.isEmpty ? "—" : list)."
   }
 
   private let disabledKey = "disabledMonitors"
@@ -173,6 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     profiles = loadProfiles()
     colorCorrections = loadColorCorrections()
+    colorMeasurement = loadColorMeasurement()
     disabledIDs = Set(UserDefaults.standard.stringArray(forKey: disabledKey) ?? [])
     hotkeyUp = loadCombo(hotkeyUpKey) ?? .defaultUp
     hotkeyDown = loadCombo(hotkeyDownKey) ?? .defaultDown
@@ -194,6 +232,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       self.controlWindowController?.updateMonitors(monitors)
       self.renderStatus()
       self.sync.applyColorCorrections(self.effectiveColorCorrections)
+      // A monitor was (un)plugged while the Color Sync window is open — refresh its
+      // display list so a just-connected display (e.g. the Dell) is included.
+      self.colorSyncWC?.refreshDisplays(self.buildColorSyncDisplayList())
     }
     sync.onExternalChangedExternally = { [weak self] _ in
       // The monitor's brightness moved outside the app (its own buttons): drop
@@ -208,6 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     sync.setProfiles(profiles)
     sync.applyColorCorrections(effectiveColorCorrections)
     sync.start()
+    applyColorProfiles()   // re-assert the saved 3×3 ICC calibration after displays enumerate
 
     setupWakeObservers()
     setupMediaKeyTap()
@@ -549,6 +591,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     wc.displays = buildColorSyncDisplayList()
     wc.onPreview = { [weak self] map in self?.sync.applyColorCorrections(map, viaHardware: false) }  // live, gamma-only, no persist
     wc.onSave = { [weak self] map in self?.saveColorCorrections(map) }           // persist + apply
+    // 3×3 (ICC) path: install from the just-measured samples (preview), or persist+install (save).
+    wc.onApplyProfiles = { [weak self] samples, refID in
+      self?.sync.applyColorProfiles(samples: samples, referenceID: refID)
+    }
+    wc.onSaveProfiles = { [weak self] samples, refID in
+      self?.saveColorMeasurement(ColorSyncMeasurement(referenceID: refID, samples: samples))
+    }
+    wc.onClearProfiles = { [weak self] in self?.sync.clearColorProfiles() }   // "Before" A/B
     wc.onShowTestField = { [weak self] in self?.showTestField() }
     wc.onHideTestField = { [weak self] in self?.hideTestField() }
     wc.onClose = { [weak self] in
@@ -559,11 +609,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       // (discarding any unsaved preview).
       self.sync.endFixedBrightness()
       self.sync.applyColorCorrections(self.effectiveColorCorrections)
+      self.applyColorProfiles()   // back to the saved ICC calibration (or factory)
     }
-    // Measure the RAW displays: clear any existing correction (and folded-in
-    // warm/cool/brightness nudges) so the new measurement isn't taken through an
-    // already-corrected display. Cancelling restores the saved state via onClose.
+    // Measure the displays uncorrected: clear the gamma-table correction AND revert any
+    // installed ICC profile so the camera sees each panel's native color. Cancelling
+    // restores the saved state via onClose.
     sync.applyColorCorrections([:])
+    sync.clearColorProfiles()
     // Hold every display at a known, clip-safe brightness (50%) so each is
     // measured at the same backlight operating point. Restored in onClose.
     sync.beginFixedBrightness(0.5)

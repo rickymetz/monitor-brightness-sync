@@ -7,6 +7,13 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
   var onPreview: (([String: ColorCorrection]) -> Void)?
   /// Persist (and apply) a correction map. Only called from the Save button.
   var onSave: (([String: ColorCorrection]) -> Void)?
+  /// Install the 3×3 (ICC) color profiles from the measured samples, without
+  /// persisting (preview, so the side-by-side verify reflects the real match).
+  var onApplyProfiles: (([String: PatchSamples], String) -> Void)?
+  /// Persist the measurement and install its 3×3 (ICC) profiles. From the Save button.
+  var onSaveProfiles: (([String: PatchSamples], String) -> Void)?
+  /// Revert the corrected displays to factory ICC (the "Before" A/B state).
+  var onClearProfiles: (() -> Void)?
   /// Fired when the window closes so the owner can drop its reference (re-entrancy).
   var onClose: (() -> Void)?
   /// Show / hide the uniform test field (with A/B labels) on every display, for
@@ -57,6 +64,21 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
       stack.topAnchor.constraint(equalTo: w.contentView!.topAnchor, constant: 24),
       stack.widthAnchor.constraint(lessThanOrEqualToConstant: 400),
     ])
+  }
+
+  /// Replace the display list after a hotplug (called from AppDelegate's monitor
+  /// callback). No-op once a measurement is underway or done this session, so a
+  /// display change mid-ramp (or after results are shown) can't reshuffle the
+  /// sequence or wipe the fine-tune UI — re-open the window to pick it up then.
+  func refreshDisplays(_ list: [(id: String, screen: NSScreen, label: String)]) {
+    guard displayIndex < 0, collectedSamples.isEmpty else { return }
+    let before = Set(displays.map { $0.id })
+    displays = list
+    if Set(list.map { $0.id }) != before, let ref = displays.first {
+      // Re-show the lock field on the (possibly new) reference and refresh the hint.
+      if let screen = screen(for: ref.id) { card.show(.solid(lockLevel), on: screen) }
+      statusLabel.stringValue = "Displays updated (\(list.count) found). Press your phone to \(ref.label) and tap Lock & Start."
+    }
   }
 
   func begin() {
@@ -201,7 +223,10 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
     corrections = ColorMatcher.corrections(measurements: measurements, referenceID: referenceID)
     matchReports = ColorMatcher.report(measurements: measurements, referenceID: referenceID,
                                        corrections: corrections)
-    onPreview?(corrections)
+    // Install the full 3×3 (ICC) correction from the measured samples — this is the
+    // real color match. The diagonal `corrections` above are kept only for the
+    // on-screen readout/quality numbers, not applied (ICC supersedes them).
+    onApplyProfiles?(collectedSamples, referenceID)
 
     // Diagnostics to file (readable without screenshots).
     ColorSyncDebugLog.session("MEASUREMENT  reference=\(referenceID)")
@@ -249,69 +274,22 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
   }
 
   private func presentFineTune() {
-    statusLabel.stringValue = "Done — colors matched. Fine-tune below, then Save."
+    statusLabel.stringValue = "Done — 3×3 color match applied. Check it against the test field, then Save."
     imageView.image = nil
 
     // Remove any previous tune UI (e.g. if presentFineTune is called again)
     tuneStack?.removeFromSuperview()
 
-    let nonRef = displays.dropFirst()
-    guard !nonRef.isEmpty else { return }
-
-    // Initialize tune state for each non-reference display
-    for d in nonRef where tune[d.id] == nil {
-      tune[d.id] = (warmCool: 0, brightness: 1)
-    }
+    guard !displays.dropFirst().isEmpty else { return }
 
     var rows: [NSView] = []
 
-    // Per-display slider rows
-    for d in nonRef {
-      let header = NSTextField(labelWithString: d.label)
-      header.font = NSFont.boldSystemFont(ofSize: 12)
-
-      // Warm/cool slider
-      let warmLabel = NSTextField(labelWithString: "Warm ↔ Cool")
-      warmLabel.font = NSFont.systemFont(ofSize: 11)
-      let warmSlider = NSSlider(value: tune[d.id]?.warmCool ?? 0,
-                                minValue: -1, maxValue: 1, target: self,
-                                action: #selector(sliderChanged(_:)))
-      warmSlider.tag = sliderTag(id: d.id, kind: 0)
-      warmSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
-
-      let warmRow = NSStackView(views: [warmLabel, warmSlider])
-      warmRow.orientation = .horizontal
-      warmRow.spacing = 8
-      warmRow.alignment = .centerY
-
-      // Brightness slider
-      let brightLabel = NSTextField(labelWithString: "Brightness")
-      brightLabel.font = NSFont.systemFont(ofSize: 11)
-      let brightSlider = NSSlider(value: tune[d.id]?.brightness ?? 1,
-                                  minValue: 0.5, maxValue: 1, target: self,
-                                  action: #selector(sliderChanged(_:)))
-      brightSlider.tag = sliderTag(id: d.id, kind: 1)
-      brightSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
-
-      let brightRow = NSStackView(views: [brightLabel, brightSlider])
-      brightRow.orientation = .horizontal
-      brightRow.spacing = 8
-      brightRow.alignment = .centerY
-
-      let displayStack = NSStackView(views: [header, warmRow, brightRow])
-      displayStack.orientation = .vertical
-      displayStack.spacing = 6
-      displayStack.alignment = .leading
-
-      rows.append(displayStack)
-    }
-
-    // Before/After checkbox
-    let beforeAfter = NSButton(checkboxWithTitle: "Before (show uncorrected)", target: self,
+    // A/B the full ICC correction against the factory profile (no per-channel sliders
+    // in v1 — the 3×3 IS the match; a warm/cool nudge can layer on later).
+    let beforeAfter = NSButton(checkboxWithTitle: "Before (factory profile)", target: self,
                                action: #selector(beforeAfterToggled(_:)))
     rows.append(beforeAfter)
 
-    // Save button
     let saveBtn = NSButton(title: "Save", target: self, action: #selector(saveTapped(_:)))
     saveBtn.bezelStyle = .rounded
     saveBtn.keyEquivalent = "\r"
@@ -332,9 +310,6 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
         stack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -24),
       ])
     }
-
-    // Apply current state immediately as a preview (not persisted until Save)
-    onPreview?(adjustedMap())
   }
 
   // MARK: - Slider tags (encode display index + kind into an Int)
@@ -363,14 +338,15 @@ final class ColorSyncWindowController: NSWindowController, NSWindowDelegate {
 
   @objc private func beforeAfterToggled(_ sender: NSButton) {
     if sender.state == .on {
-      onPreview?([:])   // identity everywhere → "before"
+      onClearProfiles?()                              // factory profiles → "before"
     } else {
-      onPreview?(adjustedMap())
+      onApplyProfiles?(collectedSamples, referenceID) // re-install the 3×3 match → "after"
     }
   }
 
   @objc private func saveTapped(_ sender: NSButton) {
-    onSave?(adjustedMap())
+    // v1 saves the 3×3 (ICC) measurement; the diagonal gamma-table path is superseded.
+    onSaveProfiles?(collectedSamples, referenceID)
     close()
   }
 
