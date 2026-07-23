@@ -24,4 +24,9 @@ run_check hotkey-checks \
   Sources/SyncBrightness/HotKey.swift \
   Tests/HotKeyChecks/main.swift
 
+run_check mediakey-checks \
+  -framework Cocoa \
+  Sources/SyncBrightness/MediaKeyTap.swift \
+  Tests/MediaKeyChecks/main.swift
+
 exit "$status"
