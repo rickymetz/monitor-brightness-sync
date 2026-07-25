@@ -12,6 +12,7 @@ final class KeyRecorder: NSButton {
   var combo: KeyCombo? { didSet { updateTitle() } }
   private var recording = false { didSet { updateTitle() } }
   private var monitor: Any?
+  private var resignObserver: NSObjectProtocol?
 
   init() {
     super.init(frame: .zero)
@@ -34,11 +35,23 @@ final class KeyRecorder: NSButton {
       if event.type == .keyDown { return self.handle(event) ? nil : event }
       return event // ignore flagsChanged; wait for a real key
     }
+    // If the user clicks away instead of pressing a combo, stop listening —
+    // otherwise the monitor stays installed and eats the next ⌘-anything as a
+    // binding, with the button stuck on "Type shortcut…".
+    if let window {
+      resignObserver = NotificationCenter.default.addObserver(
+        forName: NSWindow.didResignKeyNotification, object: window, queue: .main
+      ) { [weak self] _ in self?.endRecording() }
+    }
   }
 
   private func endRecording() {
     recording = false
     if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
+    if let resignObserver {
+      NotificationCenter.default.removeObserver(resignObserver)
+      self.resignObserver = nil
+    }
   }
 
   /// Returns true if the event was consumed (captured, cleared, or cancelled).

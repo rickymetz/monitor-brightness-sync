@@ -51,6 +51,9 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
   private var rowSwitches: [NSSwitch] = []
   private var rowSliders: [NSSlider] = []
   private var rowLabels: [NSTextField] = []
+  /// Row index of the slider the user last moved; while the mouse is still down
+  /// on it, reported state isn't written back to it.
+  private var activeSliderTag: Int?
 
   private enum Tab: String, CaseIterable {
     case displays, dimming, shortcuts, general
@@ -136,7 +139,10 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
       for (i, m) in monitors.enumerated() {
         rowSwitches[i].state = m.enabled ? .on : .off
         rowLabels[i].stringValue = m.healthy ? m.name : "⚠ \(m.name)"
-        rowSliders[i].doubleValue = m.brightness * 100
+        // Reported state echoes back while the user is still dragging; writing it
+        // to the slider they're holding makes the knob stutter under the cursor.
+        let dragging = activeSliderTag == i && NSEvent.pressedMouseButtons != 0
+        if !dragging { rowSliders[i].doubleValue = m.brightness * 100 }
       }
       return
     }
@@ -295,6 +301,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
   private func buildMonitorsCard(_ content: NSView, _ y: CGFloat) -> CGFloat {
     rowIDs = monitors.map(\.id)
     rowSwitches = []; rowSliders = []; rowLabels = []
+    activeSliderTag = nil
 
     if monitors.isEmpty {
       return card(content, y, rowCount: 1) { card in
@@ -518,6 +525,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
 
   @objc private func monitorBrightnessChanged(_ sender: NSSlider) {
     guard rowIDs.indices.contains(sender.tag) else { return }
+    activeSliderTag = sender.tag
     onSetMonitorBrightness(rowIDs[sender.tag], sender.doubleValue / 100)
   }
 

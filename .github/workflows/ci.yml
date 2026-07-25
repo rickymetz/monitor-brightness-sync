@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch supersedes an in-flight run; macOS runner
+# minutes are billed at 10x, so don't pay for results nobody will read.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test
+    # macos-26 is Apple Silicon (this app is Apple Silicon only) and carries the
+    # macOS 26 SDK that OverlayMaterial's NSGlassEffectView path needs to compile.
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # Framework-free checks over the pure logic (BrightnessCurve, KeyCombo,
+      # BrightnessKeyDecoder, DisplayIdentity). Runs first: it's the fast signal.
+      - name: Unit checks
+        run: ./run-tests.sh
+
+      # The full release compile plus the .app assembly, i.e. the path a user
+      # actually runs. Signs ad-hoc here — no signing identity on the runner.
+      - name: Build app bundle
+        run: ./build.sh

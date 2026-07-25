@@ -130,16 +130,25 @@ final class ExternalDisplay {
 }
 
 enum DDC {
+  /// A DDC-capable service paired with the identity of the framebuffer it sits
+  /// under, before ids are made unique.
+  private struct FoundService {
+    let service: IOAVService
+    let id: String
+    let name: String
+    let serial: Int64
+  }
+
   /// Find every external display we can drive over DDC/CI.
   static func externalDisplays() -> [ExternalDisplay] {
-    var displays: [ExternalDisplay] = []
+    var found: [FoundService] = []
     let root = IORegistryGetRootEntry(kIOMainPortDefault)
-    guard root != 0 else { return displays }
+    guard root != 0 else { return [] }
     defer { IOObjectRelease(root) }
 
     var iterator = io_iterator_t()
     guard IORegistryEntryCreateIterator(root, "IOService", IOOptionBits(kIORegistryIterateRecursively), &iterator) == KERN_SUCCESS else {
-      return displays
+      return []
     }
     defer { IOObjectRelease(iterator) }
 
@@ -160,9 +169,20 @@ enum DDC {
         if let location = Self.stringProperty(of: entry, key: "Location"), location == "External",
            let unmanaged = IOAVServiceCreateWithService(kCFAllocatorDefault, entry) {
           let service = unmanaged.takeRetainedValue()
-          displays.append(ExternalDisplay(service: service, id: lastIdentity.id, name: lastIdentity.name, serialNumber: lastIdentity.serial))
+          found.append(FoundService(service: service, id: lastIdentity.id, name: lastIdentity.name, serial: lastIdentity.serial))
         }
       }
+    }
+
+    // Identical monitors can report the same identity string; give each its own
+    // id (so their settings don't merge) and a distinct name (so they're
+    // tellable apart in the UI).
+    let ids = DisplayIdentity.uniqued(found.map { $0.id })
+    let names = DisplayIdentity.disambiguated(names: found.map { $0.name })
+    var displays: [ExternalDisplay] = []
+    displays.reserveCapacity(found.count)
+    for (index, item) in found.enumerated() {
+      displays.append(ExternalDisplay(service: item.service, id: ids[index], name: names[index], serialNumber: item.serial))
     }
     Self.resolveDisplayIDs(displays)
     return displays
@@ -216,27 +236,39 @@ enum DDC {
     var packet: [UInt8] = [UInt8(0x80 | (send.count + 1)), UInt8(send.count)] + send + [0]
     let seed: UInt8 = send.count == 1 ? (kDDC7BitAddress << 1) : ((kDDC7BitAddress << 1) ^ kDDCDataAddress)
     packet[packet.count - 1] = checksum(seed: seed, data: packet, start: 0, end: packet.count - 2)
+    let expectsReply = !reply.isEmpty
 
-    var success = false
     for _ in 0...retries {
+      var success = false
       for _ in 0 ..< max(1, writeCycles) {
         usleep(10000)
         success = IOAVServiceWriteI2C(service, UInt32(kDDC7BitAddress), UInt32(kDDCDataAddress), &packet, UInt32(packet.count)) == 0
       }
-      if !reply.isEmpty {
+      if expectsReply {
+        // Clear the buffer first: a reply left over from an earlier attempt could
+        // otherwise still satisfy the checksum and be read back as fresh data.
+        reply = [UInt8](repeating: 0, count: reply.count)
         usleep(50000)
-        if IOAVServiceReadI2C(service, UInt32(kDDC7BitAddress), 0, &reply, UInt32(reply.count)) == 0 {
-          success = checksum(seed: 0x50, data: reply, start: 0, end: reply.count - 2) == reply[reply.count - 1]
-        }
+        // The reply is the answer we asked for, so its outcome — not the write's —
+        // decides the result. Inheriting the write's success here would report a
+        // refused read as a valid (all-zero) reading.
+        success = IOAVServiceReadI2C(service, UInt32(kDDC7BitAddress), 0, &reply, UInt32(reply.count)) == 0
+          && replyChecksumValid(reply)
       }
       if success { return true }
       usleep(20000)
     }
-    return success
+    return false
+  }
+
+  private static func replyChecksumValid(_ reply: [UInt8]) -> Bool {
+    guard reply.count >= 2 else { return false }
+    return checksum(seed: 0x50, data: reply, start: 0, end: reply.count - 2) == reply[reply.count - 1]
   }
 
   private static func checksum(seed: UInt8, data: [UInt8], start: Int, end: Int) -> UInt8 {
     var chk = seed
+    guard start >= 0, end < data.count, start <= end else { return chk }
     for i in start...end { chk ^= data[i] }
     return chk
   }

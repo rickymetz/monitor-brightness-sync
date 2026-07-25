@@ -19,7 +19,8 @@ enum Diagnostics {
     let externals = DDC.externalDisplays()
     out += "External displays over DDC/CI: \(externals.count)\n"
     for (i, display) in externals.enumerated() {
-      if let result = DDC.read(service: display.service, command: kVCPBrightness) {
+      let result = DDC.read(service: display.service, command: kVCPBrightness)
+      if let result {
         out += String(format: "  [%d] %@  id=%@  current=%d  max=%d (DDC read OK)\n",
                       i, display.name, display.id, Int(result.current), Int(result.max))
       } else {
@@ -27,7 +28,11 @@ enum Diagnostics {
       }
       // Optional: probe whether writes are accepted (changes brightness to ~50%).
       if writeProbe {
-        let probeValue = UInt16((Double(display.maxBrightness) * 0.5).rounded())
+        // Use the range the monitor just reported; maxBrightness is still the
+        // 100 default here because nothing has called refreshMaxBrightness().
+        let reported = result.map { Double($0.max) } ?? 0
+        let range = reported > 0 ? reported : Double(display.maxBrightness)
+        let probeValue = UInt16((range * 0.5).rounded())
         let wrote = DDC.write(service: display.service, command: kVCPBrightness, value: probeValue)
         out += "      DDC write probe (set ~50%): \(wrote ? "accepted (IOReturn OK)" : "FAILED")\n"
       }

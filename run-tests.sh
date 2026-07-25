@@ -19,6 +19,10 @@ run_check curve-checks \
   Sources/SyncBrightness/BrightnessCurve.swift \
   Tests/CurveChecks/main.swift
 
+run_check identity-checks \
+  Sources/SyncBrightness/DisplayIdentity.swift \
+  Tests/IdentityChecks/main.swift
+
 run_check hotkey-checks \
   -framework Cocoa -framework Carbon \
   Sources/SyncBrightness/HotKey.swift \
