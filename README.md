@@ -63,6 +63,11 @@ swift build                             # debug build
 > and aggregates the result. With Xcode installed you can add a normal
 > `.testTarget` if you prefer.
 
+Every push and pull request runs the same two commands on CI
+(`.github/workflows/ci.yml`): the unit checks, then the release build and `.app`
+assembly. The job uses the `macos-26` runner — Apple Silicon, and the macOS 26
+SDK that `OverlayMaterial`'s Liquid Glass path needs to compile.
+
 ### Diagnostics (no UI)
 
 ```sh
@@ -119,6 +124,7 @@ tools/make-icon.swift         Generates Resources/AppIcon.icns
 tools/make-signing-cert.sh    Creates a stable self-signed signing identity (one-time)
 build.sh                      Compile + bundle + sign (stable identity if present, else ad-hoc)
 run-tests.sh                  Compile + run the unit checks (CLT only, no Xcode)
+.github/workflows/ci.yml      CI: unit checks + release build on the macos-26 runner
 ```
 
 ### Threading model
