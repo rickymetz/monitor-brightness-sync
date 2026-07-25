@@ -33,8 +33,16 @@ final class HotKey {
   private var ref: EventHotKeyRef?
   private let id: UInt32
 
+  /// The registry only needs to find the instance for a firing hotkey id — it
+  /// must not keep it alive, or `deinit` (and with it `unregister`) is never
+  /// reached for a registered hotkey.
+  private final class WeakRef {
+    weak var hotKey: HotKey?
+    init(_ hotKey: HotKey) { self.hotKey = hotKey }
+  }
+
   private static let signature: OSType = 0x4D425348 // 'MBSH'
-  private static var instances: [UInt32: HotKey] = [:]
+  private static var instances: [UInt32: WeakRef] = [:]
   private static var nextID: UInt32 = 1
   private static var handlerInstalled = false
 
@@ -55,7 +63,7 @@ final class HotKey {
                                      GetEventDispatcherTarget(), 0, &newRef)
     guard status == noErr, let newRef else { return false }
     ref = newRef
-    HotKey.instances[id] = self
+    HotKey.instances[id] = WeakRef(self)
     return true
   }
 
@@ -74,7 +82,7 @@ final class HotKey {
       let err = GetEventParameter(event, EventParamName(kEventParamDirectObject),
                                   EventParamType(typeEventHotKeyID), nil,
                                   MemoryLayout<EventHotKeyID>.size, nil, &hkID)
-      if err == noErr, let hk = HotKey.instances[hkID.id] { hk.onPress?() }
+      if err == noErr, let hk = HotKey.instances[hkID.id]?.hotKey { hk.onPress?() }
       return noErr
     }, 1, &spec, nil, nil)
   }

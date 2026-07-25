@@ -100,7 +100,10 @@ final class MediaKeyTap {
       CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
       runLoopSource = nil
     }
-    if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
+    if let tap {
+      CGEvent.tapEnable(tap: tap, enable: false)
+      CFMachPortInvalidate(tap) // tear the port down; dropping the ref alone can leave it live
+    }
     tap = nil
   }
 

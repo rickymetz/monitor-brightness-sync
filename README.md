@@ -96,6 +96,7 @@ Sources/
                               gamma; manual/clamshell coalescing; reconcile reads; calibration; wake re-apply
     DDC.swift                 DDC/CI over IOAVService: enumeration + identity, CGDirectDisplayID resolution,
                               low-level write/read framing, ExternalDisplay (incl. gamma-follow state)
+    DisplayIdentity.swift     Uniquing of per-monitor ids/names for identical displays (pure, tested)
     BuiltinBrightness.swift   Reads/sets any display's brightness via dlsym'd DisplayServices
     BrightnessCurve.swift     Multi-point calibration curve + piecewise-linear interpolation (pure, tested)
     GammaDimmer.swift         Software dimming via CoreGraphics gamma tables
@@ -112,6 +113,8 @@ Sources/
 Tests/
   CurveChecks/                BrightnessCurve interpolation/persistence checks
   HotKeyChecks/               KeyCombo modifier-mapping / defaults / Codable checks
+  IdentityChecks/             DisplayIdentity id/name uniquing checks
+  MediaKeyChecks/             BrightnessKeyDecoder checks for both brightness-key event forms
 tools/make-icon.swift         Generates Resources/AppIcon.icns
 tools/make-signing-cert.sh    Creates a stable self-signed signing identity (one-time)
 build.sh                      Compile + bundle + sign (stable identity if present, else ad-hoc)

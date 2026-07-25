@@ -30,6 +30,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var externalOnlyLevel: Double?
   private var axPollTimer: Timer?
   private var axPollElapsed = 0
+  private var awaitingAccessibility = false
+
+  /// User-facing state of lid-closed key control: on once the tap is live, and
+  /// also while we're waiting for the Accessibility grant they just opted into.
+  /// Without the second half the switch snaps straight back off, which reads as
+  /// "that didn't work" while the system dialog is still on screen.
+  private var keyControlActive: Bool { mediaKeyTap.isRunning || awaitingAccessibility }
 
   // Last status values reported by the sync controller.
   private var lastFraction = -1.0
@@ -332,7 +339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 
   private func updateKeyControlItem() {
-    keyControlItem.state = mediaKeyTap.isRunning ? .on : .off // checkmark reflects on/off
+    keyControlItem.state = keyControlActive ? .on : .off // checkmark reflects on/off
   }
 
   // MARK: - Windows
@@ -347,7 +354,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let controller = OnboardingWindowController()
     controller.onFinished = { [weak self] in
       UserDefaults.standard.set(true, forKey: key)
-      self?.onboardingController = nil
+      // This runs from windowWillClose:, and the controller owns the window
+      // that's still closing (and is its unowned delegate). Let AppKit finish
+      // unwinding before dropping our last reference.
+      DispatchQueue.main.async { self?.onboardingController = nil }
       self?.showControlWindow()
     }
     onboardingController = controller
@@ -472,11 +482,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.saveProfiles(self.profiles)
         self.sync.setProfiles(self.profiles)
         self.sync.setCalibrating(false)
-        self.calibrationController = nil
         self.calibrationVisible = false
         self.isCalibrating = false
         self.updateActivationPolicy()
         self.renderStatus()
+        // Released next runloop turn: this runs from windowWillClose:, and the
+        // controller owns the window that's still closing.
+        DispatchQueue.main.async { self.calibrationController = nil }
       }
     )
     calibrationController = controller
@@ -508,11 +520,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   @objc private func toggleDimming() { setDimming(!subFloorDimming) }
   @objc private func toggleBlackout() { setBlackout(!allowBlackout) }
   @objc private func toggleLoginItem() { setLoginItem(!LoginItem.isEnabled) }
-  @objc private func enableKeyControl() { setKeyControl(!mediaKeyTap.isRunning) }
+  @objc private func enableKeyControl() { setKeyControl(!keyControlActive) }
 
   private func startAccessibilityPolling() {
     axPollTimer?.invalidate()
     axPollElapsed = 0
+    awaitingAccessibility = true
     // Once the user flips the Accessibility switch, start the tap automatically
     // instead of making them click the menu item again.
     axPollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
@@ -520,9 +533,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       self.axPollElapsed += 1
       if self.mediaKeyTap.start() {
         timer.invalidate(); self.axPollTimer = nil
+        self.awaitingAccessibility = false
         self.pushToggleStates()
       } else if self.axPollElapsed >= 120 {
         timer.invalidate(); self.axPollTimer = nil // give up; relaunch will pick it up
+        self.awaitingAccessibility = false
+        // Say why the switch is going back off rather than reverting silently.
+        self.messageHUD.show("Grant Accessibility access to use the brightness keys with the lid closed")
+        self.pushToggleStates()
       }
     }
   }
@@ -530,6 +548,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private func stopAccessibilityPolling() {
     axPollTimer?.invalidate()
     axPollTimer = nil
+    awaitingAccessibility = false
   }
 
   private func setSyncEnabled(_ enabled: Bool) {
@@ -585,7 +604,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     controlWindowController?.updateToggles(dimming: subFloorDimming,
                                            blackout: allowBlackout,
                                            login: LoginItem.isEnabled,
-                                           keyControl: mediaKeyTap.isRunning)
+                                           keyControl: keyControlActive)
     controlWindowController?.updateHotkeys(enabled: hotkeysEnabled, up: hotkeyUp, down: hotkeyDown)
   }
 
