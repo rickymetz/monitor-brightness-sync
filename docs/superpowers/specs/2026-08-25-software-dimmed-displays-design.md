@@ -76,12 +76,26 @@ online non-builtin `CGDirectDisplayID`s that no DDC display claimed, wrapping ea
 `ExternalDisplay` with `service: nil` and `cgDisplayID` pre-set.
 
 **Enrollment filter.** The unclaimed set is not only DisplayLink monitors — it also
-includes AirPlay targets, Sidecar iPads, and third-party virtual displays. Enrolling
-those enabled would gamma-dim an Apple TV to match the laptop as soon as an AirPlay
-session starts. Rule: displays reporting Apple's vendor number `0x610` are enrolled
-**default-disabled** (listed in the UI, dimming nothing until deliberately enabled); all
-other vendors enroll enabled. This is a default for newly-seen displays only — an explicit
-user choice, once made, persists in the existing `disabledIDs` set.
+includes AirPlay targets, Sidecar iPads, and third-party virtual displays. Enrolling those
+enabled would gamma-dim an Apple TV to match the laptop as soon as an AirPlay session
+starts.
+
+Rule: a software-only display reporting Apple's vendor number `0x610` is enrolled
+**default-disabled**; every other vendor enrolls enabled. Either way the display is listed
+in the UI, so a default-disabled one is one checkbox away from working.
+
+This vendor test is a heuristic, not a verified property of every AirPlay and Sidecar
+target — it is unverified on this hardware and it is the reason the display stays visible
+and toggleable rather than being hidden. It is chosen because it fails safe in both
+directions: a misclassified AirPlay target dims nothing until asked, and a misclassified
+real monitor is one checkbox from working.
+
+**Persisting the default.** `disabledIDs` records displays the user has switched off; it
+cannot distinguish "never seen" from "seen and left enabled". Applying a default-disabled
+rule therefore needs a companion `seenDisplayIDs` set persisted in `UserDefaults`. On
+enumeration, a software-only display whose id is absent from `seenDisplayIDs` is added to
+it, and additionally added to `disabledIDs` when the vendor test says default-disabled.
+A display already in `seenDisplayIDs` keeps whatever the user chose.
 
 ### Identity
 
@@ -131,8 +145,15 @@ For a software-only display the gamma factor is the calibration curve's output:
 level = max(minGamma, display.curve.external(for: builtin))
 ```
 
-where `minGamma` is `minGammaFactor` (0.15) unless "allow dimming all the way to black" is
-on, in which case 0.
+where `minGamma` is `minGammaFactor` (0.15).
+
+**"Allow dimming all the way to black" does not apply to software-only displays** — the
+0.15 clamp holds for them regardless of the setting. On a DDC monitor that option means
+"hold DDC at minimum and let gamma take it the rest of the way", and the backlight is
+still under hardware control. On a gamma-only display there is no backlight to fall back
+on, so removing the clamp yields a fully black screen that cannot be read well enough to
+un-black itself — recoverable only from another display. The clamp is retained as a safety
+floor.
 
 **Behavior change to an existing path.** The refused-DDC-write branch
 (`SyncController.swift:262-269`) currently passes `dimInput` — the *raw* built-in level —
@@ -188,7 +209,11 @@ Pure logic, unit-tested in the existing CLT-only harness (`run-tests.sh`):
   - mixed DDC and software-only — asserts no cross-binding
   - two identical DDC monitors distinguished by EDID serial
   - identity fallback when vendor/model/serial are all zero
-- **Enrollment filter** — Apple-vendor displays default to disabled, others to enabled.
+- **Enrollment filter** — Apple-vendor displays default to disabled, others to enabled;
+  a display already in `seenDisplayIDs` is left at the user's choice rather than reset to
+  the default.
+- **Blackout clamp** — a software-only display stays at or above `minGammaFactor` even
+  with "allow dimming all the way to black" enabled.
 
 Hardware paths (gamma writes, DDC) cannot be unit-tested. `Diagnostics` (`SYNCBRIGHTNESS_DIAG=1`)
 is extended to list software-only displays alongside DDC ones, with their resolved
@@ -200,7 +225,7 @@ identity key, name and CG display id.
 | --- | --- |
 | `Sources/SyncBrightness/DDC.swift` | optional `service`, `isSoftwareOnly`, second enumeration pass, enrollment filter, claim ordering, extracted pure resolver |
 | `Sources/SyncBrightness/SyncController.swift` | software-only branches in `setLevel`, `tick` calibration, reconcile/refresh skips, curve on both gamma paths |
-| `Sources/SyncBrightness/AppDelegate.swift` | display-name cache on main, populated before `sync.start()` |
+| `Sources/SyncBrightness/AppDelegate.swift` | display-name cache on main, populated before `sync.start()`; persisted `seenDisplayIDs` set |
 | `Sources/SyncBrightness/ControlWindowController.swift` | software-dimmed badge |
 | `Sources/SyncBrightness/Diagnostics.swift` | list software-only displays |
 | `Tests/ResolverChecks/` | new suite |
