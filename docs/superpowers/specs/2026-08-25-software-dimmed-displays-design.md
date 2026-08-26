@@ -97,6 +97,12 @@ enumeration, a software-only display whose id is absent from `seenDisplayIDs` is
 it, and additionally added to `disabledIDs` when the vendor test says default-disabled.
 A display already in `seenDisplayIDs` keeps whatever the user chose.
 
+**Accepted transient.** The default is applied on the main thread from the monitors
+callback, so it takes one round trip back to the sync queue — one to three ticks, roughly
+150–450 ms — during which a newly-appeared AirPlay display is still enrolled enabled and
+may visibly dim for a blink. It self-corrects on the next tick. Not worth engineering
+around.
+
 ### Identity
 
 Profile key is `sw-<vendor>-<model>-<serial>` from `CGDisplayVendorNumber`,

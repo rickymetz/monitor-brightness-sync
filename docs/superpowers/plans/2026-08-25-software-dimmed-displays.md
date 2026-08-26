@@ -334,6 +334,8 @@ returned alongside DDC ones.
 
 **Files:**
 - Modify: `Sources/SyncBrightness/DDC.swift`
+- Modify: `Sources/SyncBrightness/SyncController.swift:159-160`
+- Modify: `Sources/SyncBrightness/Diagnostics.swift`
 
 **Interfaces:**
 - Consumes: `DisplayResolver.resolve(ddc:cg:)`, `CGDisplayCandidate`, `DDCCandidate` from
@@ -588,26 +590,91 @@ Run: `grep -n "identity(of:" Sources/SyncBrightness/DDC.swift`
 Expected: exactly two call sites — one in `externalDisplays()` assigning to `lastIdentity`,
 one in `debugServiceDump()` reading `?.name`.
 
-- [ ] **Step 7: Build**
+- [ ] **Step 7: Fix the two call sites that widening `service` breaks**
+
+`DDC.read` and `DDC.write` still take a non-optional `IOAVService`, so every caller passing
+`display.service` now fails to compile. Two live outside `ExternalDisplay` and must be
+fixed **in this task** — their permanent versions come later, but the tree has to build and
+commit clean now.
+
+In `Sources/SyncBrightness/SyncController.swift`, in `reconcileExternalLevels`, replace:
+
+```swift
+      guard let result = DDC.read(service: display.service, command: kVCPBrightness), result.max > 0 else { continue }
+```
+
+with:
+
+```swift
+      guard let service = display.service,
+            let result = DDC.read(service: service, command: kVCPBrightness), result.max > 0 else { continue }
+```
+
+In `Sources/SyncBrightness/Diagnostics.swift`, replace:
+
+```swift
+    let externals = DDC.externalDisplays()
+    out += "External displays over DDC/CI: \(externals.count)\n"
+    for (i, display) in externals.enumerated() {
+      if let result = DDC.read(service: display.service, command: kVCPBrightness) {
+```
+
+with:
+
+```swift
+    // Software-only displays get their own section in Task 7; this loop is DDC.
+    let externals = DDC.externalDisplays().filter { !$0.isSoftwareOnly }
+    out += "External displays over DDC/CI: \(externals.count)\n"
+    for (i, display) in externals.enumerated() {
+      if let service = display.service, let result = DDC.read(service: service, command: kVCPBrightness) {
+```
+
+and in the same file's `writeProbe` block, replace:
+
+```swift
+        let wrote = DDC.write(service: display.service, command: kVCPBrightness, value: probeValue)
+```
+
+with:
+
+```swift
+        let wrote = display.service.map {
+          DDC.write(service: $0, command: kVCPBrightness, value: probeValue)
+        } ?? false
+```
+
+Then confirm nothing else was missed:
+
+Run: `grep -n "service: display.service\|service: service" Sources/SyncBrightness/*.swift`
+Expected: no `service: display.service` remains outside `ExternalDisplay`.
+
+- [ ] **Step 8: Build**
 
 Run: `swift build -c release 2>&1 | tail -20`
 Expected: `Build complete!`
 
-- [ ] **Step 8: Verify enumeration on real hardware**
+- [ ] **Step 9: Verify enumeration on real hardware**
 
 Run: `SYNCBRIGHTNESS_DIAG=1 ./.build/release/SyncBrightness 2>&1 | head -20`
-Expected: still reports `External displays over DDC/CI: 0` (this counter is not updated
-until Task 7) and does not crash. The behavioral proof comes in Task 3.
+Expected: still reports `External displays over DDC/CI: 0` on the reference machine — the
+software-only display is filtered out of that count by Step 7 and gets its own section in
+Task 7. No crash.
 
-- [ ] **Step 9: Run the unit checks**
+**Expect the monitor to start dimming at this point.** Enumeration alone is enough: the old
+`setLevel` calls `setBrightness`, the nil-service `write` returns false, and the existing
+refused-DDC fallback dims via gamma. It uses the raw built-in level and ignores the
+calibration curve — Task 3 fixes that. Seeing the screen respond here is the first proof
+the enumeration works, not a bug.
+
+- [ ] **Step 10: Run the unit checks**
 
 Run: `./run-tests.sh`
 Expected: PASS, all three suites.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
-git add Sources/SyncBrightness/DDC.swift
+git add Sources/SyncBrightness/DDC.swift Sources/SyncBrightness/SyncController.swift Sources/SyncBrightness/Diagnostics.swift
 git commit -m "feat: enumerate displays that have no DDC channel"
 ```
 
@@ -735,11 +802,12 @@ with:
 
 - [ ] **Step 4: Keep reconcile off the software-only displays**
 
+Task 2 Step 7 already added the `guard let service` binding. This step only adds the
+`!display.isSoftwareOnly` clause, so a display with no DDC channel is never read at all.
 Replace:
 
 ```swift
     for display in externals where !disabledIDs.contains(display.id) && !display.followsViaGamma && display.readResponsive {
-      guard let result = DDC.read(service: display.service, command: kVCPBrightness), result.max > 0 else { continue }
 ```
 
 with:
@@ -747,8 +815,6 @@ with:
 ```swift
     for display in externals where !disabledIDs.contains(display.id) && !display.isSoftwareOnly
       && !display.followsViaGamma && display.readResponsive {
-      guard let service = display.service,
-            let result = DDC.read(service: service, command: kVCPBrightness), result.max > 0 else { continue }
 ```
 
 - [ ] **Step 5: Report the new state to the UI**
@@ -1201,10 +1267,11 @@ import CoreGraphics
 import Foundation
 ```
 
-Replace:
+Replace the lines Task 2 Step 7 left in place:
 
 ```swift
-    let externals = DDC.externalDisplays()
+    // Software-only displays get their own section in Task 7; this loop is DDC.
+    let externals = DDC.externalDisplays().filter { !$0.isSoftwareOnly }
     out += "External displays over DDC/CI: \(externals.count)\n"
     for (i, display) in externals.enumerated() {
 ```
