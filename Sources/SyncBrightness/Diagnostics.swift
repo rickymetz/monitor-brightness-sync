@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -16,8 +17,16 @@ enum Diagnostics {
       out += "Built-in display: not found\n"
     }
 
-    // Software-only displays (no DDC channel) are reported in their own section.
-    let externals = DDC.externalDisplays().filter { !$0.isSoftwareOnly }
+    var names: [CGDirectDisplayID: String] = [:]
+    for screen in NSScreen.screens {
+      guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { continue }
+      names[CGDirectDisplayID(truncating: number)] = screen.localizedName
+    }
+
+    let all = DDC.externalDisplays(names: names)
+    let externals = all.filter { !$0.isSoftwareOnly }
+    let software = all.filter { $0.isSoftwareOnly }
+
     out += "External displays over DDC/CI: \(externals.count)\n"
     for (i, display) in externals.enumerated() {
       if let service = display.service, let result = DDC.read(service: service, command: kVCPBrightness) {
@@ -34,6 +43,13 @@ enum Diagnostics {
         } ?? false
         out += "      DDC write probe (set ~50%): \(wrote ? "accepted (IOReturn OK)" : "FAILED")\n"
       }
+    }
+
+    out += "Software-dimmed displays (no DDC channel): \(software.count)\n"
+    for (i, display) in software.enumerated() {
+      let cg = display.cgDisplayID.map(String.init) ?? "unresolved"
+      out += "  [\(i)] \(display.name)  key=\(display.id)  cgDisplayID=\(cg)"
+      out += display.prefersDefaultDisabled ? "  (enrolls disabled: Apple vendor)\n" : "\n"
     }
 
     out += "\nIORegistry display services:\n"

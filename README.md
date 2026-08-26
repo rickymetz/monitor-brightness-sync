@@ -10,7 +10,7 @@ A macOS menu-bar agent that mirrors the **built-in display's brightness onto ext
 - **Per-monitor calibration** — a multi-point curve per display (saved as a profile), so brightness *matches* across panels, not just tracks.
 - **Per-monitor control** — enable/disable each external, or set its brightness manually.
 - **Sub-floor dimming** — dim an external below its hardware minimum (in software) to match the Mac at low brightness, with an opt-in "all the way to black".
-- **Software-gamma fallback** — monitors that don't speak DDC (DisplayLink, some hubs, certain TVs) still follow the built-in via the gamma table.
+- **Software dimming for non-DDC monitors** — displays with no DDC/CI channel (DisplayLink docks, some hubs, certain TVs) follow the built-in via the gamma table, with their own calibration curve. Software dimming only goes *down* from the panel's own brightness setting, so set the monitor's own buttons to maximum and the app's 100% becomes that. AirPlay and Sidecar displays are detected too, but enroll switched off so a session doesn't start dimming a TV.
 - **Clamshell / external-only mode** — with the lid closed, the brightness keys drive the external directly, with a lookalike on-screen overlay.
 - **Custom global hotkeys** — optional, user-recordable shortcuts that replace the brightness keys (handy on a keyboard without them).
 - **Reconcile** — notices when you change brightness on the monitor's own buttons and keeps the app's state honest.
@@ -98,6 +98,7 @@ Sources/
                               low-level write/read framing, ExternalDisplay (incl. gamma-follow state)
     BuiltinBrightness.swift   Reads/sets any display's brightness via dlsym'd DisplayServices
     BrightnessCurve.swift     Multi-point calibration curve + piecewise-linear interpolation (pure, tested)
+    DisplayResolver.swift     Claims CoreGraphics displays for DDC monitors; the rest are software-dimmed (pure, tested)
     GammaDimmer.swift         Software dimming via CoreGraphics gamma tables
     MediaKeyTap.swift         CGEventTap on the brightness keys (clamshell / external-only mode)
     HotKey.swift              Carbon global hotkeys + KeyCombo model (modifier mapping is unit-tested)
@@ -112,6 +113,7 @@ Sources/
 Tests/
   CurveChecks/                BrightnessCurve interpolation/persistence checks
   HotKeyChecks/               KeyCombo modifier-mapping / defaults / Codable checks
+  ResolverChecks/             DisplayResolver claim-cascade and identity-key checks
 tools/make-icon.swift         Generates Resources/AppIcon.icns
 tools/make-signing-cert.sh    Creates a stable self-signed signing identity (one-time)
 build.sh                      Compile + bundle + sign (stable identity if present, else ad-hoc)
@@ -140,6 +142,8 @@ There are two: the **menu-bar dropdown** (a quick, always-synced subset of toggl
 - **Accessibility permission** is required for "Use brightness keys with lid closed" (the event tap), and it only *persists* with a stable signing identity (see [Code signing & permissions](#code-signing--permissions)). Custom global hotkeys don't need it.
 - **Be gentle with DDC.** Some monitors (e.g. those that fail DDC *reads*) have flaky controllers; flooding them with traffic can wedge the link. Writes are single-cycle, low-retry, and coalesced, and reconcile reads are infrequent — keep it that way.
 - **Software dimming and Night Shift.** Sub-floor dimming and the non-DDC fallback both adjust the display's gamma/color table, so they can interact with Night Shift, True Tone, or f.lux at very low brightness. Dimming is clamped to a small visible floor by default ("Allow dimming all the way to black" removes the clamp); gamma is restored on quit, and `CGDisplayRestoreColorSyncSettings()` runs on launch to self-heal a force-killed run.
+- **Software dimming can't brighten.** With no DDC channel there's no backlight to command — the gamma table only scales luminance downward. "Allow dimming all the way to black" is also ignored for these displays: there's no backlight to fall back on, so removing the clamp would leave a screen too dark to read the control that undoes it.
+- **DisplayLink still needs its driver.** This app controls brightness on a DisplayLink monitor; it does not replace DisplayLink Manager, which is what puts pixels on the screen. There is no way around that on macOS.
 
 ## Reference
 
