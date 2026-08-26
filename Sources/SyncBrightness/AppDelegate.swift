@@ -72,6 +72,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private let disabledKey = "disabledMonitors"
   private var disabledIDs: Set<String> = []
 
+  // `disabledIDs` records displays the user switched off. It cannot tell "never
+  // seen" from "seen and left on", so a default-disabled rule needs its own set —
+  // otherwise every relaunch would re-disable a display the user turned on.
+  private let seenKey = "seenMonitors"
+  private var seenIDs: Set<String> = []
+
   private let onboardedKey = "hasOnboarded"
 
   private let hotkeysEnabledKey = "hotkeysEnabled"
@@ -97,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     profiles = loadProfiles()
     disabledIDs = Set(UserDefaults.standard.stringArray(forKey: disabledKey) ?? [])
+    seenIDs = Set(UserDefaults.standard.stringArray(forKey: seenKey) ?? [])
     hotkeyUp = loadCombo(hotkeyUpKey) ?? .defaultUp
     hotkeyDown = loadCombo(hotkeyDownKey) ?? .defaultDown
     hotKeyUp.onPress = { [weak self] in self?.handleHotKey(increase: true) }
@@ -113,6 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     sync.onMonitors = { [weak self] monitors in
       guard let self else { return }
+      self.applyFirstSightDefaults(monitors)
       self.monitors = monitors
       self.controlWindowController?.updateMonitors(monitors)
       self.renderStatus()
@@ -414,6 +422,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   // MARK: - Per-monitor enable
+
+  /// Give a never-before-seen display its default. Everything enrolls syncing
+  /// except software-dimmed Apple-vendor displays — AirPlay targets and Sidecar
+  /// iPads, which should not start dimming the moment a session begins. They are
+  /// still listed, so turning one on is a single switch.
+  private func applyFirstSightDefaults(_ monitors: [MonitorState]) {
+    var newlySeen = false
+    var disabledChanged = false
+    for monitor in monitors where !seenIDs.contains(monitor.id) {
+      seenIDs.insert(monitor.id)
+      newlySeen = true
+      if monitor.prefersDefaultDisabled {
+        disabledIDs.insert(monitor.id)
+        disabledChanged = true
+      }
+    }
+    guard newlySeen else { return }
+    UserDefaults.standard.set(Array(seenIDs), forKey: seenKey)
+    guard disabledChanged else { return }
+    UserDefaults.standard.set(Array(disabledIDs), forKey: disabledKey)
+    // This re-enters via onMonitors, but every display is in seenIDs by now, so
+    // the next pass returns at the `guard newlySeen` above.
+    sync.setDisabled(disabledIDs)
+  }
 
   private func setMonitorEnabled(_ id: String, _ enabled: Bool) {
     if enabled { disabledIDs.remove(id) } else { disabledIDs.insert(id) }
