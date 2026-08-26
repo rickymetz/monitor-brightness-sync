@@ -22,6 +22,10 @@ struct MonitorState: Equatable {
   var enabled: Bool
   var healthy: Bool
   var brightness: Double // current external fraction 0...1
+  /// Dimmed via the gamma table because the display has no DDC channel.
+  var softwareDimmed = false
+  /// Should enroll switched off the first time it is seen. See DisplayResolver.
+  var prefersDefaultDisabled = false
 }
 
 /// One external display reachable over DDC/CI via its IOAVService.

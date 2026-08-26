@@ -28,6 +28,9 @@ final class SyncController {
   private var disabledIDs: Set<String> = []
   private var subFloorDimming = true
   private var allowBlackout = false
+  // Screen names come from AppKit, which is main-thread-only, so AppDelegate
+  // collects them and hands them over rather than us reaching for NSScreen here.
+  private var displayNames: [CGDirectDisplayID: String] = [:]
 
   // Calibration: while active, auto-sync is suspended and the target display is
   // driven to `manualExternal` (applied via the timer so drags are coalesced).
@@ -90,6 +93,14 @@ final class SyncController {
     queue.async {
       self.isEnabled = enabled
       if enabled { self.lastAppliedFraction = -1 }
+    }
+  }
+
+  func setDisplayNames(_ names: [CGDirectDisplayID: String]) {
+    queue.async {
+      guard self.displayNames != names else { return }
+      self.displayNames = names
+      self.rescanDisplays()
     }
   }
 
@@ -156,7 +167,8 @@ final class SyncController {
     guard !activelyDriving else { return }
 
     var changed = false
-    for display in externals where !disabledIDs.contains(display.id) && !display.followsViaGamma && display.readResponsive {
+    for display in externals where !disabledIDs.contains(display.id) && !display.isSoftwareOnly
+      && !display.followsViaGamma && display.readResponsive {
       guard let service = display.service,
             let result = DDC.read(service: service, command: kVCPBrightness), result.max > 0 else { continue }
       let observed = max(0.0, min(1.0, Double(result.current) / Double(result.max)))
@@ -220,8 +232,14 @@ final class SyncController {
       guard abs(manualExternal - lastManualApplied) >= threshold else { return }
       lastManualApplied = manualExternal
       for display in externals where calibrationTargetID == nil || display.id == calibrationTargetID {
-        gamma.set(display.cgDisplayID, factor: 1) // pure DDC while calibrating
-        display.setBrightness(fraction: manualExternal)
+        if display.isSoftwareOnly {
+          // Pinning gamma to 1 and writing DDC would move the slider and change
+          // nothing on screen, making the curve uncalibratable. Drive gamma.
+          followViaGamma(display, level: manualExternal)
+        } else {
+          gamma.set(display.cgDisplayID, factor: 1) // pure DDC while calibrating
+          display.setBrightness(fraction: manualExternal)
+        }
       }
       reportMonitors()
       return
@@ -249,14 +267,35 @@ final class SyncController {
   // disconnected monitor. Keep a small visible floor.
   private let minGammaFactor = 0.15
 
+  /// Dim a display via the gamma table and record that it's following in
+  /// software. The clamp is unconditional here: a display with no DDC channel has
+  /// no backlight to fall back on, so a zero factor would leave a screen too dark
+  /// to read the control that undoes it.
+  private func followViaGamma(_ display: ExternalDisplay, level: Double) {
+    let clamped = max(minGammaFactor, min(1.0, level))
+    gamma.set(display.cgDisplayID, factor: clamped)
+    display.markGammaFollow(level: clamped)
+  }
+
   /// Drive a display to `ddcFraction`, except when sub-floor dimming is on and
   /// `dimInput` is below `floor` — then hold DDC at minimum and dim further via
   /// gamma (clamped so it never blacks out). Shared by sync and clamshell modes.
   /// If the DDC write is refused, fall back to following the built-in entirely
   /// via software gamma so non-DDC displays still track brightness.
   private func setLevel(_ display: ExternalDisplay, ddcFraction: Double, dimInput: Double, floor: Double, ramp: Bool = false) {
-    let belowFloor = subFloorDimming && floor > 0 && dimInput < floor
     let minGamma = allowBlackout ? 0.0 : minGammaFactor
+
+    if display.isSoftwareOnly {
+      // No DDC channel: the curve's output *is* the luminance scale, and gamma
+      // is the only lever. The blackout clamp is kept even when "allow blackout"
+      // is on — there is no backlight to fall back on here, so a zero factor
+      // leaves a screen too dark to read the checkbox that would undo it.
+      guard display.cgDisplayID != nil else { display.clearGammaFollow(); return }
+      followViaGamma(display, level: ddcFraction)
+      return
+    }
+
+    let belowFloor = subFloorDimming && floor > 0 && dimInput < floor
     let wroteOK = display.setBrightness(fraction: belowFloor ? 0 : ddcFraction, ramp: ramp)
 
     if !wroteOK {
@@ -265,7 +304,9 @@ final class SyncController {
       // control for a software luminance scale. Only possible (and only reported
       // as working) when we resolved a CoreGraphics display id to drive.
       if display.cgDisplayID != nil {
-        let level = max(minGamma, dimInput)
+        // Use the curve's output, not the raw built-in level: a monitor that
+        // falls back to gamma should still honour its calibration.
+        let level = max(minGamma, ddcFraction)
         gamma.set(display.cgDisplayID, factor: level)
         display.markGammaFollow(level: level)
       } else {
@@ -291,7 +332,7 @@ final class SyncController {
 
   private func rescanDisplays() {
     builtinID = BuiltinBrightness.builtinDisplayID()
-    externals = DDC.externalDisplays()
+    externals = DDC.externalDisplays(names: displayNames)
     for display in externals {
       display.refreshMaxBrightness()
       display.curve = profiles[display.id] ?? .default
@@ -312,8 +353,12 @@ final class SyncController {
     let states = externals.map {
       MonitorState(id: $0.id, name: $0.name,
                    enabled: !disabledIDs.contains($0.id),
-                   healthy: $0.lastWriteOK || $0.followsViaGamma, // gamma fallback still tracks
-                   brightness: $0.currentFraction)
+                   // A software-only display is healthy when we have a display to
+                   // drive; a DDC one when writes land or gamma is tracking.
+                   healthy: $0.isSoftwareOnly ? ($0.cgDisplayID != nil) : ($0.lastWriteOK || $0.followsViaGamma),
+                   brightness: $0.currentFraction,
+                   softwareDimmed: $0.isSoftwareOnly,
+                   prefersDefaultDisabled: $0.prefersDefaultDisabled)
     }
     DispatchQueue.main.async { self.onMonitors?(states) }
   }
