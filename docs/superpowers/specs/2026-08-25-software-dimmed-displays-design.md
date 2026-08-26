@@ -131,11 +131,26 @@ positional fallback can bind the DisplayLink display's CG ID to a DDC monitor an
 the wrong screen. Harmless today (zero DDC externals on this machine) but wrong as soon as a
 DDC monitor is added.
 
-New order:
+A software-only display cannot "claim first", because which displays are
+software-only is only knowable *after* the DDC displays have taken theirs. The rule is
+therefore a claim cascade, strongest signal first, with the residue falling out as
+software-only:
 
-1. Software-only displays claim their own CG ID — they *are* a CG ID.
-2. DDC displays match by EDID serial.
-3. Positional fallback over whatever remains.
+1. **EDID serial** — each DDC display takes the CG display whose serial matches. Skipped
+   when the serial is 0 ("not reported").
+2. **Product ID** — each still-unresolved DDC display takes the CG display whose model
+   number matches, but only when exactly one candidate matches. This requires reading
+   `ProductID` from `ProductAttributes`, which `identity(of:)` does not currently do.
+3. **Positional** — whatever DDC displays remain take what is left, in connection order.
+4. **Residue** — every CG display no DDC display claimed is software-only.
+
+**Known limitation, accepted.** Step 3 is a guess, exactly as today. A DDC monitor that
+reports neither a serial nor a product ID, sharing a machine with a software-only display,
+can still bind to the wrong CG ID. Steps 1 and 2 make that vanishingly rare — the affected
+DisplayLink display reports both (`model=10049`, `serial=244`) — and step 4 is the part
+that actually matters, since leftovers are currently discarded rather than driven. This is
+documented rather than solved because there is no positive way to identify a virtual
+display from CoreGraphics alone.
 
 ### Brightness mapping
 
@@ -206,7 +221,9 @@ Pure logic, unit-tested in the existing CLT-only harness (`run-tests.sh`):
 - **New `ResolverChecks` suite** over the extracted claim-ordering rule, as a pure function
   of `(ddcDisplays, cgIDs)`:
   - zero DDC externals plus one software-only display (the affected setup)
-  - mixed DDC and software-only — asserts no cross-binding
+  - mixed DDC and software-only, with the software display listed **first** in
+    connection order — the adversarial ordering that mis-binds under today's code
+  - product-ID tiebreak when the EDID serial is 0
   - two identical DDC monitors distinguished by EDID serial
   - identity fallback when vendor/model/serial are all zero
 - **Enrollment filter** — Apple-vendor displays default to disabled, others to enabled;
@@ -223,7 +240,8 @@ identity key, name and CG display id.
 
 | File | Change |
 | --- | --- |
-| `Sources/SyncBrightness/DDC.swift` | optional `service`, `isSoftwareOnly`, second enumeration pass, enrollment filter, claim ordering, extracted pure resolver |
+| `Sources/SyncBrightness/DisplayResolver.swift` | **new** — pure claim cascade and identity keys, no IOKit |
+| `Sources/SyncBrightness/DDC.swift` | optional `service`, `isSoftwareOnly`, `productID`, second enumeration pass, calls the resolver |
 | `Sources/SyncBrightness/SyncController.swift` | software-only branches in `setLevel`, `tick` calibration, reconcile/refresh skips, curve on both gamma paths |
 | `Sources/SyncBrightness/AppDelegate.swift` | display-name cache on main, populated before `sync.start()`; persisted `seenDisplayIDs` set |
 | `Sources/SyncBrightness/ControlWindowController.swift` | software-dimmed badge |
