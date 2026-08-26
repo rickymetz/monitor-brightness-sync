@@ -16,10 +16,11 @@ enum Diagnostics {
       out += "Built-in display: not found\n"
     }
 
-    let externals = DDC.externalDisplays()
+    // Software-only displays (no DDC channel) are reported in their own section.
+    let externals = DDC.externalDisplays().filter { !$0.isSoftwareOnly }
     out += "External displays over DDC/CI: \(externals.count)\n"
     for (i, display) in externals.enumerated() {
-      if let result = DDC.read(service: display.service, command: kVCPBrightness) {
+      if let service = display.service, let result = DDC.read(service: service, command: kVCPBrightness) {
         out += String(format: "  [%d] %@  id=%@  current=%d  max=%d (DDC read OK)\n",
                       i, display.name, display.id, Int(result.current), Int(result.max))
       } else {
@@ -28,7 +29,9 @@ enum Diagnostics {
       // Optional: probe whether writes are accepted (changes brightness to ~50%).
       if writeProbe {
         let probeValue = UInt16((Double(display.maxBrightness) * 0.5).rounded())
-        let wrote = DDC.write(service: display.service, command: kVCPBrightness, value: probeValue)
+        let wrote = display.service.map {
+          DDC.write(service: $0, command: kVCPBrightness, value: probeValue)
+        } ?? false
         out += "      DDC write probe (set ~50%): \(wrote ? "accepted (IOReturn OK)" : "FAILED")\n"
       }
     }

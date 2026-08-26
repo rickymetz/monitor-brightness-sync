@@ -157,7 +157,8 @@ final class SyncController {
 
     var changed = false
     for display in externals where !disabledIDs.contains(display.id) && !display.followsViaGamma && display.readResponsive {
-      guard let result = DDC.read(service: display.service, command: kVCPBrightness), result.max > 0 else { continue }
+      guard let service = display.service,
+            let result = DDC.read(service: service, command: kVCPBrightness), result.max > 0 else { continue }
       let observed = max(0.0, min(1.0, Double(result.current) / Double(result.max)))
       if let known = display.lastSetFraction, abs(observed - known) < 0.02 { continue }
       display.syncObservedLevel(observed)

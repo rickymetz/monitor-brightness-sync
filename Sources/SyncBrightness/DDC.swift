@@ -26,7 +26,12 @@ struct MonitorState: Equatable {
 
 /// One external display reachable over DDC/CI via its IOAVService.
 final class ExternalDisplay {
-  let service: IOAVService
+  /// Nil when the display has no DDC/CI channel (DisplayLink, some hubs, some
+  /// TVs). Such a display can still be dimmed via the gamma table.
+  let service: IOAVService?
+  /// A display with no DDC channel is permanently in the gamma-follow state that
+  /// this class already models — there is no backlight to talk to.
+  var isSoftwareOnly: Bool { service == nil }
   /// Stable identity (manufacturer/product/serial) used as the profile key.
   let id: String
   let name: String
@@ -52,7 +57,13 @@ final class ExternalDisplay {
   private(set) var gammaFollowLevel = 1.0
 
   var info: DisplayInfo { DisplayInfo(id: id, name: name) }
-  var currentFraction: Double { followsViaGamma ? gammaFollowLevel : (lastSetFraction ?? 0) }
+  var currentFraction: Double {
+    if followsViaGamma { return gammaFollowLevel }
+    // A software-only display we aren't dimming is at the panel's own setting,
+    // which is this app's 100% — not 0, which would read as "off" in the UI.
+    if isSoftwareOnly { return 1.0 }
+    return lastSetFraction ?? 0
+  }
 
   func markGammaFollow(level: Double) {
     followsViaGamma = true
@@ -70,11 +81,23 @@ final class ExternalDisplay {
     lastSetFraction = max(0.0, min(1.0, fraction))
   }
 
-  init(service: IOAVService, id: String, name: String, serialNumber: Int64) {
+  /// EDID product id, used to match this monitor to a CoreGraphics display when
+  /// the serial number is unreported. 0 means the monitor does not report one.
+  let productID: UInt32
+  /// Set for software-only displays that should not start dimming on first sight
+  /// (AirPlay targets, Sidecar iPads). Consumed by AppDelegate, not here.
+  let prefersDefaultDisabled: Bool
+
+  init(service: IOAVService?, id: String, name: String, serialNumber: Int64,
+       productID: UInt32 = 0, cgDisplayID: CGDirectDisplayID? = nil,
+       prefersDefaultDisabled: Bool = false) {
     self.service = service
     self.id = id
     self.name = name
     self.serialNumber = serialNumber
+    self.productID = productID
+    self.cgDisplayID = cgDisplayID
+    self.prefersDefaultDisabled = prefersDefaultDisabled
   }
 
   /// Probe the monitor for its reported brightness range. Best-effort; also
@@ -83,6 +106,7 @@ final class ExternalDisplay {
   /// adjustments (clamshell/external-only) move from the real value, not 0.
   /// This runs only at scan/wake (not the hot sync loop), so it can retry hard.
   func refreshMaxBrightness() {
+    guard let service else { return } // no bus to probe
     if let result = DDC.read(service: service, command: kVCPBrightness, retries: 4), result.max > 0 {
       maxBrightness = result.max
       readResponsive = true
@@ -124,14 +148,18 @@ final class ExternalDisplay {
   }
 
   private func write(fraction: Double, retries: Int) -> Bool {
+    guard let service else { return false } // no DDC channel — the caller dims via gamma
     let value = UInt16((fraction * Double(maxBrightness)).rounded())
     return DDC.write(service: service, command: kVCPBrightness, value: value, retries: retries)
   }
 }
 
 enum DDC {
-  /// Find every external display we can drive over DDC/CI.
-  static func externalDisplays() -> [ExternalDisplay] {
+  /// Every external display we can drive: over DDC/CI where the monitor speaks
+  /// it, and via the gamma table where it does not. `names` is the screen-name
+  /// cache from AppDelegate — `NSScreen` is main-thread-only, and this runs on
+  /// the sync queue.
+  static func externalDisplays(names: [CGDirectDisplayID: String] = [:]) -> [ExternalDisplay] {
     var displays: [ExternalDisplay] = []
     let root = IORegistryGetRootEntry(kIOMainPortDefault)
     guard root != 0 else { return displays }
@@ -146,7 +174,7 @@ enum DDC {
     let nameBuf = UnsafeMutablePointer<CChar>.allocate(capacity: MemoryLayout<io_name_t>.size)
     defer { nameBuf.deallocate() }
 
-    var lastIdentity = (id: "external", name: "External display", serial: Int64(0))
+    var lastIdentity = (id: "external", name: "External display", serial: Int64(0), productID: UInt32(0))
     while case let entry = IOIteratorNext(iterator), entry != IO_OBJECT_NULL {
       defer { IOObjectRelease(entry) }
       guard IORegistryEntryGetName(entry, nameBuf) == KERN_SUCCESS else { continue }
@@ -160,30 +188,41 @@ enum DDC {
         if let location = Self.stringProperty(of: entry, key: "Location"), location == "External",
            let unmanaged = IOAVServiceCreateWithService(kCFAllocatorDefault, entry) {
           let service = unmanaged.takeRetainedValue()
-          displays.append(ExternalDisplay(service: service, id: lastIdentity.id, name: lastIdentity.name, serialNumber: lastIdentity.serial))
+          displays.append(ExternalDisplay(service: service, id: lastIdentity.id, name: lastIdentity.name,
+                                          serialNumber: lastIdentity.serial, productID: lastIdentity.productID))
         }
       }
     }
-    Self.resolveDisplayIDs(displays)
-    return displays
+    return displays + Self.attachDisplayIDs(to: displays, names: names)
   }
 
-  /// Assign a CGDirectDisplayID to each external by EDID serial (disambiguates
-  /// identical monitors), falling back to connection order.
-  static func resolveDisplayIDs(_ externals: [ExternalDisplay]) {
-    var count: UInt32 = 0
-    guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return }
-    var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
-    guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return }
-    var candidates = ids.filter { CGDisplayIsBuiltin($0) == 0 }
+  /// Assign a CoreGraphics display id to each DDC display, and build an
+  /// `ExternalDisplay` for every display no DDC monitor claimed. The rule itself
+  /// lives in `DisplayResolver` so it can be unit-tested; this is just the
+  /// CoreGraphics plumbing around it.
+  static func attachDisplayIDs(to ddcDisplays: [ExternalDisplay],
+                               names: [CGDirectDisplayID: String]) -> [ExternalDisplay] {
+    let assignment = DisplayResolver.resolve(
+      ddc: ddcDisplays.map { DDCCandidate(serial: $0.serialNumber, model: $0.productID) },
+      cg: cgCandidates(names: names))
 
-    for ext in externals where ext.serialNumber != 0 {
-      if let idx = candidates.firstIndex(where: { Int64(CGDisplaySerialNumber($0)) == ext.serialNumber }) {
-        ext.cgDisplayID = candidates.remove(at: idx)
-      }
+    for (i, display) in ddcDisplays.enumerated() {
+      display.cgDisplayID = assignment.ddc[i]
     }
-    for ext in externals where ext.cgDisplayID == nil {
-      if !candidates.isEmpty { ext.cgDisplayID = candidates.removeFirst() }
+    return assignment.software.map {
+      ExternalDisplay(service: nil, id: $0.key, name: $0.name, serialNumber: 0,
+                      cgDisplayID: $0.cgID, prefersDefaultDisabled: $0.prefersDefaultDisabled)
+    }
+  }
+
+  private static func cgCandidates(names: [CGDirectDisplayID: String]) -> [CGDisplayCandidate] {
+    var count: UInt32 = 0
+    guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
+    var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+    guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return [] }
+    return ids.filter { CGDisplayIsBuiltin($0) == 0 }.map {
+      CGDisplayCandidate(id: $0, vendor: CGDisplayVendorNumber($0), model: CGDisplayModelNumber($0),
+                         serial: CGDisplaySerialNumber($0), unit: CGDisplayUnitNumber($0), name: names[$0])
     }
   }
 
@@ -284,7 +323,7 @@ enum DDC {
 
   /// Build a display name and a stable profile id from the framebuffer's
   /// product attributes (manufacturer + product + serial).
-  private static func identity(of entry: io_service_t) -> (id: String, name: String, serial: Int64)? {
+  private static func identity(of entry: io_service_t) -> (id: String, name: String, serial: Int64, productID: UInt32)? {
     guard let unmanaged = IORegistryEntryCreateCFProperty(entry, "DisplayAttributes" as CFString, kCFAllocatorDefault, IOOptionBits(kIORegistryIterateRecursively)),
           let attrs = unmanaged.takeRetainedValue() as? NSDictionary,
           let product = attrs["ProductAttributes"] as? NSDictionary
@@ -295,6 +334,11 @@ enum DDC {
     let manufacturer = (product["ManufacturerID"] as? String) ?? ""
     let productName = (product["ProductName"] as? String) ?? ""
     let serialNumber = (product["SerialNumber"] as? Int64) ?? 0
+    // Some framebuffer shim entries (observed on Apple Silicon) report a
+    // "ProductID" far outside the 16-bit EDID product-code range. That is not a
+    // real product id, so treat anything that overflows UInt32 as unreported
+    // rather than trapping on the narrowing conversion.
+    let productID = UInt32(exactly: (product["ProductID"] as? Int) ?? 0) ?? 0
     var serial = ""
     if serialNumber != 0 {
       serial = String(serialNumber)
@@ -305,6 +349,6 @@ enum DDC {
     let name = productName.isEmpty ? "External display" : productName
     let parts = [manufacturer, productName, serial].filter { !$0.isEmpty }
     let id = parts.isEmpty ? "external" : parts.joined(separator: "-")
-    return (id, name, serialNumber)
+    return (id, name, serialNumber, productID)
   }
 }
