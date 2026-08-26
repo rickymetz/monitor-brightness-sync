@@ -1104,24 +1104,28 @@ with:
       let check = NSMenuItem(title: monitor.displayTitle,
 ```
 
-- [ ] **Step 4: Explain the badge to VoiceOver and the tooltip**
+- [ ] **Step 4: Explain software dimming in the menu tooltip**
 
-Still in the same menu-building loop, find:
+Still in the same menu-building loop, replace this exact statement:
 
 ```swift
       check.toolTip = monitor.healthy
+        ? "Include \(monitor.name) in brightness sync."
+        : "\(monitor.name) isn't responding to DDC — check that DDC/CI is enabled in its menu."
 ```
 
-Read the full existing ternary, and change only its **true** branch so a software-dimmed
-monitor is explained. Replace the whole `check.toolTip = …` statement with:
+with:
 
 ```swift
       check.toolTip = !monitor.healthy
-        ? "This monitor isn't responding. Check its cable and that DDC/CI is enabled in its menu."
-        : (monitor.softwareDimmed
-           ? "This display has no DDC channel, so it's dimmed in software. It follows the built-in downward from the panel's own brightness setting; it can't be brightened past it."
-           : "Mirror the built-in display's brightness onto this monitor.")
+        ? "\(monitor.name) isn't responding to DDC — check that DDC/CI is enabled in its menu."
+        : monitor.softwareDimmed
+          ? "Include \(monitor.name) in brightness sync. It has no DDC channel, so it's dimmed in software: it follows the built-in downward from the panel's own brightness setting, and can't be brightened past it."
+          : "Include \(monitor.name) in brightness sync."
 ```
+
+Both existing strings are preserved verbatim — only the software-dimming case is new. Do
+not reword the other two.
 
 - [ ] **Step 5: Confirm no name rendering was missed**
 
