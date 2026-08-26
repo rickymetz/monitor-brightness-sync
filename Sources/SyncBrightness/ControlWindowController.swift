@@ -135,7 +135,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
       // In place — don't rebuild, so an in-progress slider drag isn't interrupted.
       for (i, m) in monitors.enumerated() {
         rowSwitches[i].state = m.enabled ? .on : .off
-        rowLabels[i].stringValue = m.healthy ? m.name : "⚠ \(m.name)"
+        rowLabels[i].stringValue = m.displayTitle
         rowSliders[i].doubleValue = m.brightness * 100
       }
       return
@@ -314,7 +314,7 @@ final class ControlWindowController: NSObject, NSWindowDelegate, NSToolbarDelega
       if index > 0 { separatorAbsolute(card, top) }
 
       // Name + enable switch
-      let label = NSTextField(labelWithString: monitor.healthy ? monitor.name : "⚠ \(monitor.name)")
+      let label = NSTextField(labelWithString: monitor.displayTitle)
       label.font = .systemFont(ofSize: 13)
       label.frame = NSRect(x: 16, y: top + (rowH - 17) / 2, width: cardW - 16 - 60, height: 17)
       card.addSubview(label)

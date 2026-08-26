@@ -26,6 +26,13 @@ struct MonitorState: Equatable {
   var softwareDimmed = false
   /// Should enroll switched off the first time it is seen. See DisplayResolver.
   var prefersDefaultDisabled = false
+
+  /// The one place a monitor's row title is composed. Used by the menu and the
+  /// control window so they can never disagree.
+  var displayTitle: String {
+    let base = softwareDimmed ? "\(name) (software dimming)" : name
+    return healthy ? base : "⚠ \(base)"
+  }
 }
 
 /// One external display reachable over DDC/CI via its IOAVService.

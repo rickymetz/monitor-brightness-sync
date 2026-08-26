@@ -465,14 +465,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       return
     }
     for monitor in monitors {
-      let check = NSMenuItem(title: monitor.healthy ? monitor.name : "⚠ \(monitor.name)",
+      let check = NSMenuItem(title: monitor.displayTitle,
                              action: #selector(menuMonitorToggle(_:)), keyEquivalent: "")
       check.target = self
       check.state = monitor.enabled ? .on : .off
       check.representedObject = monitor.id
-      check.toolTip = monitor.healthy
-        ? "Include \(monitor.name) in brightness sync."
-        : "\(monitor.name) isn't responding to DDC — check that DDC/CI is enabled in its menu."
+      check.toolTip = !monitor.healthy
+        ? "\(monitor.name) isn't responding to DDC — check that DDC/CI is enabled in its menu."
+        : monitor.softwareDimmed
+          ? "Include \(monitor.name) in brightness sync. It has no DDC channel, so it's dimmed in software: it follows the built-in downward from the panel's own brightness setting, and can't be brightened past it."
+          : "Include \(monitor.name) in brightness sync."
       monitorsMenu.addItem(check)
 
       let sliderItem = NSMenuItem()
