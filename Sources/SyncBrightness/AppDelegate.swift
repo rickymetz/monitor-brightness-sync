@@ -27,6 +27,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   private var isCalibrating = false
 
   private var monitors: [MonitorState] = []
+  // NSScreen is main-thread-only and SyncController runs its scans on a private
+  // queue, so names are collected here and handed over. Never reach for NSScreen
+  // from the sync queue — shutdown() does queue.sync from main and it deadlocks.
+  private var displayNames: [CGDirectDisplayID: String] = [:]
   private var externalOnlyLevel: Double?
   private var axPollTimer: Timer?
   private var axPollElapsed = 0
@@ -124,6 +128,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     sync.setAllowBlackout(allowBlackout)
     sync.setDisabled(disabledIDs)
     sync.setProfiles(profiles)
+    // Populate the name cache before the first scan so the first enumeration
+    // isn't cold; the notification keeps it current afterwards.
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(screenParametersChanged),
+      name: NSApplication.didChangeScreenParametersNotification, object: nil)
+    refreshDisplayNames()
     sync.start()
 
     setupWakeObservers()
@@ -330,6 +340,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     if let data = try? JSONEncoder().encode(combo) { UserDefaults.standard.set(data, forKey: key) }
   }
 
+  /// Collect display names on the main thread and hand them to the controller.
+  private func refreshDisplayNames() {
+    var names: [CGDirectDisplayID: String] = [:]
+    for screen in NSScreen.screens {
+      guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { continue }
+      names[CGDirectDisplayID(truncating: number)] = screen.localizedName
+    }
+    guard names != displayNames else { return }
+    displayNames = names
+    sync.setDisplayNames(names)
+  }
+
+  @objc private func screenParametersChanged() {
+    refreshDisplayNames()
+  }
 
   private func updateKeyControlItem() {
     keyControlItem.state = mediaKeyTap.isRunning ? .on : .off // checkmark reflects on/off
