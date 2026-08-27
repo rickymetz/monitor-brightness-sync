@@ -291,16 +291,12 @@ final class SyncController {
     DispatchQueue.main.async { self.onUpdate?(fraction, count) }
   }
 
-  // Never gamma-dim all the way to black — a fully dark external looks like a
-  // disconnected monitor. Keep a small visible floor.
-  private let minGammaFactor = 0.15
-
   /// Dim a display via the gamma table and record that it's following in
-  /// software. The clamp is unconditional here: a display with no DDC channel has
-  /// no backlight to fall back on, so a zero factor would leave a screen too dark
-  /// to read the control that undoes it.
+  /// software. The clamp is unconditional here: a display we can only reach
+  /// through gamma has no backlight to fall back on, so a zero factor would
+  /// leave a screen too dark to read the control that undoes it.
   private func followViaGamma(_ display: ExternalDisplay, level: Double) {
-    let clamped = max(minGammaFactor, min(1.0, level))
+    let clamped = GammaDimmer.clampedFactor(for: level)
     gamma.set(display.cgDisplayID, factor: clamped)
     display.markGammaFollow(level: clamped)
   }
@@ -349,8 +345,9 @@ final class SyncController {
       // to a small visible floor; full blackout removes the clamp so it reaches
       // 0. Safe here, and only here: the backlight is answering our writes, so
       // raising the built-in brings the panel straight back.
-      let minGamma = allowBlackout ? 0.0 : minGammaFactor
-      gamma.set(display.cgDisplayID, factor: max(minGamma, dimInput / floor))
+      let subFloorLevel = dimInput / floor
+      gamma.set(display.cgDisplayID,
+                factor: allowBlackout ? max(0.0, subFloorLevel) : GammaDimmer.clampedFactor(for: subFloorLevel))
     } else {
       gamma.set(display.cgDisplayID, factor: 1)
     }

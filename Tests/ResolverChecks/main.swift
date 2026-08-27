@@ -110,5 +110,47 @@ do {
   check(r.software.first?.name == "External display", "cold name cache yields a placeholder")
 }
 
+// 10. Two identical panels on one dock: a real vendor and model, but serial 0.
+//     Their keys become MonitorState.id, which the disabled/seen sets, the
+//     per-monitor slider lookup and the control window's row ids all assume is
+//     unique — a shared key means toggling one twin toggles both.
+do {
+  let a = CGDisplayCandidate(id: 40, vendor: 10635, model: 10049, serial: 0, unit: 3, name: "E27FP1K")
+  let b = CGDisplayCandidate(id: 41, vendor: 10635, model: 10049, serial: 0, unit: 4, name: "E27FP1K")
+  let r = DisplayResolver.resolve(ddc: [], cg: [a, b])
+  check(r.software.count == 2, "serial-0 twins both enroll")
+  check(r.software[0].key != r.software[1].key, "serial-0 twins do not share one key")
+  check(r.software[0].key == "sw-10635-10049-0", "the first twin keeps the short key")
+  check(r.software[1].key == "sw-10635-10049-0-4", "the repeat is disambiguated by unit number")
+  check(r.software.map(\.cgID) == [40, 41], "both keep their own CoreGraphics id")
+}
+
+// 11. A lone panel is unaffected by the uniqueness pass: no suffix, so its
+//     profile survives a replug.
+do {
+  let solo = CGDisplayCandidate(id: 40, vendor: 10635, model: 10049, serial: 0, unit: 3, name: "E27FP1K")
+  let r = DisplayResolver.resolve(ddc: [], cg: [solo])
+  check(r.software.first?.key == "sw-10635-10049-0", "a single panel keeps its short key")
+}
+
+// 12. The general invariant: resolve() never emits two software displays with
+//     the same key, whatever the EDIDs look like. Includes blank EDIDs sharing
+//     a name and a unit number, which no other signal can tell apart.
+do {
+  let candidates = [
+    CGDisplayCandidate(id: 50, vendor: 0, model: 0, serial: 0, unit: 1, name: "Panel"),
+    CGDisplayCandidate(id: 51, vendor: 0, model: 0, serial: 0, unit: 1, name: "Panel"),
+    CGDisplayCandidate(id: 52, vendor: 0, model: 0, serial: 0, unit: 1, name: nil),
+    CGDisplayCandidate(id: 53, vendor: 7789, model: 22881, serial: 0, unit: 2, name: "LG"),
+    CGDisplayCandidate(id: 54, vendor: 7789, model: 22881, serial: 0, unit: 2, name: "LG"),
+    CGDisplayCandidate(id: 55, vendor: 7789, model: 22881, serial: 0, unit: 2, name: "LG"),
+    CGDisplayCandidate(id: 56, vendor: 7789, model: 22881, serial: 99, unit: 3, name: "LG"),
+  ]
+  let r = DisplayResolver.resolve(ddc: [], cg: candidates)
+  check(r.software.count == candidates.count, "every unclaimed display enrolls")
+  check(Set(r.software.map(\.key)).count == r.software.count, "no two software displays share a key")
+  check(Set(r.software.map(\.cgID)) == Set(candidates.map(\.id)), "every display keeps its own id")
+}
+
 print(failures == 0 ? "\nAll DisplayResolver checks passed" : "\n\(failures) check(s) failed")
 exit(failures == 0 ? 0 : 1)

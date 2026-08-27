@@ -6,6 +6,19 @@ import CoreGraphics
 final class GammaDimmer {
   private var factors: [CGDirectDisplayID: Float] = [:]
 
+  /// Never gamma-dim all the way to black — a fully dark external looks like a
+  /// disconnected monitor, and the control that undoes the dimming is on it.
+  static let minFactor = 0.15
+
+  /// The gamma factor to use for a wanted luminance `level`, held at or above
+  /// the visible floor. Every caller that has no working backlight to fall back
+  /// on goes through here, whether the display has no DDC channel at all or its
+  /// DDC writes were refused. "Allow blackout" does not reach this: blackout is
+  /// safe only where the backlight still answers, which is not these cases.
+  static func clampedFactor(for level: Double) -> Double {
+    max(minFactor, min(1.0, level))
+  }
+
   /// `factor` is a 0...1 luminance multiplier (1 = no dimming).
   func set(_ id: CGDirectDisplayID?, factor: Double) {
     guard let id else { return }

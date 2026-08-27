@@ -24,6 +24,15 @@ run_check resolver-checks \
   Sources/SyncBrightness/DisplayResolver.swift \
   Tests/ResolverChecks/main.swift
 
+run_check gamma-checks \
+  -framework CoreGraphics \
+  Sources/SyncBrightness/GammaDimmer.swift \
+  Tests/GammaChecks/main.swift
+
+run_check first-sight-checks \
+  Sources/SyncBrightness/FirstSight.swift \
+  Tests/FirstSightChecks/main.swift
+
 run_check hotkey-checks \
   -framework Cocoa -framework Carbon \
   Sources/SyncBrightness/HotKey.swift \

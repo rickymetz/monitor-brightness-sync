@@ -424,24 +424,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   /// iPads, which should not start dimming the moment a session begins. They are
   /// still listed, so turning one on is a single switch.
   private func applyFirstSightDefaults(_ monitors: [MonitorState]) {
-    var newlySeen = false
-    var disabledChanged = false
-    for monitor in monitors where !seenIDs.contains(monitor.id) {
-      seenIDs.insert(monitor.id)
-      newlySeen = true
-      if monitor.prefersDefaultDisabled {
-        disabledIDs.insert(monitor.id)
-        disabledChanged = true
-      }
-    }
-    guard newlySeen else { return }
+    let outcome = FirstSight.enroll(
+      monitors.map { FirstSightMonitor(id: $0.id, prefersDefaultDisabled: $0.prefersDefaultDisabled) },
+      seen: seenIDs, disabled: disabledIDs)
+    guard outcome.newlySeen else { return }
+    seenIDs = outcome.seen
+    disabledIDs = outcome.disabled
     // Persist the disable *before* the enrollment. A crash between the two then
     // costs nothing: the display is simply unseen again next launch and gets its
     // default a second time. The other order would record "seen" with no
     // disable, permanently losing the default.
-    if disabledChanged { UserDefaults.standard.set(Array(disabledIDs), forKey: disabledKey) }
+    if outcome.disabledChanged { UserDefaults.standard.set(Array(disabledIDs), forKey: disabledKey) }
     UserDefaults.standard.set(Array(seenIDs), forKey: seenKey)
-    guard disabledChanged else { return }
+    guard outcome.disabledChanged else { return }
     // This re-enters via onMonitors, but every display is in seenIDs by now, so
     // the next pass returns at the `guard newlySeen` above.
     sync.setDisabled(disabledIDs)
