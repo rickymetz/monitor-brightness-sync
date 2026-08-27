@@ -31,6 +31,11 @@ final class SyncController {
   // Screen names come from AppKit, which is main-thread-only, so AppDelegate
   // collects them and hands them over rather than us reaching for NSScreen here.
   private var displayNames: [CGDirectDisplayID: String] = [:]
+  // The names the most recent scan actually used. A display connect fires both
+  // the CoreGraphics reconfiguration callback and a screen-parameters change, so
+  // this tells us whether a name update has already been scanned with.
+  private var scannedWithNames: [CGDirectDisplayID: String] = [:]
+  private var nameRescanToken = 0
 
   // Calibration: while active, auto-sync is suspended and the target display is
   // driven to `manualExternal` (applied via the timer so drags are coalesced).
@@ -104,11 +109,26 @@ final class SyncController {
     }
   }
 
+  /// Screen names changed. This almost always means a display was connected or
+  /// disconnected — which the reconfiguration callback is already rescanning
+  /// for. Rescanning here too would double every scan, and each scan probes
+  /// every DDC monitor at retries: 4, which is exactly the sort of bus traffic
+  /// this app tries not to generate. So defer, then rescan only if the callback
+  /// has not already scanned with these names.
   func setDisplayNames(_ names: [CGDirectDisplayID: String]) {
     queue.async {
       guard self.displayNames != names else { return }
       self.displayNames = names
-      self.rescanDisplays()
+      // Before start(): its own first scan will pick these names up.
+      guard self.timer != nil else { return }
+
+      self.nameRescanToken &+= 1
+      let token = self.nameRescanToken
+      self.queue.asyncAfter(deadline: .now() + 0.5) {
+        guard token == self.nameRescanToken else { return } // a newer change won
+        guard self.scannedWithNames != self.displayNames else { return }
+        self.rescanDisplays()
+      }
     }
   }
 
@@ -345,6 +365,7 @@ final class SyncController {
   private func rescanDisplays() {
     builtinID = BuiltinBrightness.builtinDisplayID()
     externals = DDC.externalDisplays(names: displayNames)
+    scannedWithNames = displayNames
     // The gamma table outlives this rescan; the ExternalDisplay objects do not.
     // Drop displays we no longer manage (macOS recycles display ids, so a stale
     // entry can re-dim a different panel) and keep the rest.
