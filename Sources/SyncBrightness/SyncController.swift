@@ -374,7 +374,12 @@ final class SyncController {
       // panel dark while the UI reports full brightness. Without this a rescan
       // with sync paused (or in clamshell) never heals: nothing re-applies, and
       // the next brightness key computes its base from a bogus 1.0.
-      if let applied = gamma.factor(for: display.cgDisplayID), applied < 0.999 {
+      // Only for software-only displays: on a DDC display the gamma factor is a
+      // sub-floor multiplier layered on top of DDC, not a follow level, so
+      // re-seeding it here would make currentFraction report the multiplier
+      // instead of the real level and would wrongly exclude the display from
+      // reconcileExternalLevels until the next write clears the flag.
+      if display.isSoftwareOnly, let applied = gamma.factor(for: display.cgDisplayID), applied < 0.999 {
         display.markGammaFollow(level: applied)
       }
     }
