@@ -291,8 +291,6 @@ final class SyncController {
   /// If the DDC write is refused, fall back to following the built-in entirely
   /// via software gamma so non-DDC displays still track brightness.
   private func setLevel(_ display: ExternalDisplay, ddcFraction: Double, dimInput: Double, floor: Double, ramp: Bool = false) {
-    let minGamma = allowBlackout ? 0.0 : minGammaFactor
-
     if display.isSoftwareOnly {
       // No DDC channel: the curve's output *is* the luminance scale, and gamma
       // is the only lever. The blackout clamp is kept even when "allow blackout"
@@ -313,10 +311,13 @@ final class SyncController {
       // as working) when we resolved a CoreGraphics display id to drive.
       if display.cgDisplayID != nil {
         // Use the curve's output, not the raw built-in level: a monitor that
-        // falls back to gamma should still honour its calibration.
-        let level = max(minGamma, ddcFraction)
-        gamma.set(display.cgDisplayID, factor: level)
-        display.markGammaFollow(level: level)
+        // falls back to gamma should still honour its calibration. The clamp
+        // holds even with "allow blackout" on: blackout is a DDC concession —
+        // it is safe only because the backlight still answers us. Here it does
+        // not, so gamma is the only lever, exactly as for a software-only
+        // display, and the default curve returns 0 at 15% built-in — which
+        // would black the panel out and hide the control that undoes it.
+        followViaGamma(display, level: ddcFraction)
       } else {
         display.clearGammaFollow() // no DDC and no gamma path — genuinely unreachable
       }
@@ -325,7 +326,10 @@ final class SyncController {
     display.clearGammaFollow()
     if belowFloor {
       // Below the floor, hold DDC at minimum and dim via gamma. Normally clamped
-      // to a small visible floor; full blackout removes the clamp so it reaches 0.
+      // to a small visible floor; full blackout removes the clamp so it reaches
+      // 0. Safe here, and only here: the backlight is answering our writes, so
+      // raising the built-in brings the panel straight back.
+      let minGamma = allowBlackout ? 0.0 : minGammaFactor
       gamma.set(display.cgDisplayID, factor: max(minGamma, dimInput / floor))
     } else {
       gamma.set(display.cgDisplayID, factor: 1)
