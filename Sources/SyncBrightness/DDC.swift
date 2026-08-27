@@ -185,16 +185,19 @@ enum DDC {
     let nameBuf = UnsafeMutablePointer<CChar>.allocate(capacity: MemoryLayout<io_name_t>.size)
     defer { nameBuf.deallocate() }
 
-    var lastIdentity = (id: "external", name: "External display", serial: Int64(0), productID: UInt32(0))
+    // The iterator walks framebuffers and their service proxies in order, so a
+    // proxy takes the identity of the framebuffer just above it. A framebuffer
+    // we can't read must reset this: keeping the previous one would hand the
+    // next display someone else's product id, which now feeds the resolver.
+    let unknownIdentity = (id: "external", name: "External display", serial: Int64(0), productID: UInt32(0))
+    var lastIdentity = unknownIdentity
     while case let entry = IOIteratorNext(iterator), entry != IO_OBJECT_NULL {
       defer { IOObjectRelease(entry) }
       guard IORegistryEntryGetName(entry, nameBuf) == KERN_SUCCESS else { continue }
       let entryName = String(cString: nameBuf)
 
       if entryName == "AppleCLCD2" || entryName == "IOMobileFramebufferShim" {
-        if let identity = Self.identity(of: entry) {
-          lastIdentity = identity
-        }
+        lastIdentity = Self.identity(of: entry) ?? unknownIdentity
       } else if entryName == "DCPAVServiceProxy" {
         if let location = Self.stringProperty(of: entry, key: "Location"), location == "External",
            let unmanaged = IOAVServiceCreateWithService(kCFAllocatorDefault, entry) {
@@ -204,23 +207,27 @@ enum DDC {
         }
       }
     }
-    return displays + Self.attachDisplayIDs(to: displays, names: names)
+    // Which CoreGraphics display belongs to which DDC monitor is decided by
+    // DisplayResolver so it can be unit-tested; this is the plumbing around it.
+    let assignment = DisplayResolver.resolve(
+      ddc: displays.map { DDCCandidate(serial: $0.serialNumber, model: $0.productID) },
+      cg: cgCandidates(names: names))
+    Self.assignCGDisplayIDs(assignment.ddc, to: displays)
+    return displays + Self.softwareOnlyDisplays(from: assignment.software)
   }
 
-  /// Assign a CoreGraphics display id to each DDC display, and build an
-  /// `ExternalDisplay` for every display no DDC monitor claimed. The rule itself
-  /// lives in `DisplayResolver` so it can be unit-tested; this is just the
-  /// CoreGraphics plumbing around it.
-  static func attachDisplayIDs(to ddcDisplays: [ExternalDisplay],
-                               names: [CGDirectDisplayID: String]) -> [ExternalDisplay] {
-    let assignment = DisplayResolver.resolve(
-      ddc: ddcDisplays.map { DDCCandidate(serial: $0.serialNumber, model: $0.productID) },
-      cg: cgCandidates(names: names))
-
+  /// Give each DDC display the CoreGraphics id the resolver matched to it, so it
+  /// can be gamma-dimmed if its DDC writes are refused.
+  private static func assignCGDisplayIDs(_ ids: [CGDirectDisplayID?], to ddcDisplays: [ExternalDisplay]) {
     for (i, display) in ddcDisplays.enumerated() {
-      display.cgDisplayID = assignment.ddc[i]
+      display.cgDisplayID = ids[i]
     }
-    return assignment.software.map {
+  }
+
+  /// Build an `ExternalDisplay` for every CoreGraphics display no DDC monitor
+  /// claimed. These have no DDC channel and are driven via the gamma table.
+  private static func softwareOnlyDisplays(from software: [SoftwareDisplay]) -> [ExternalDisplay] {
+    software.map {
       ExternalDisplay(service: nil, id: $0.key, name: $0.name, serialNumber: 0,
                       cgDisplayID: $0.cgID, prefersDefaultDisabled: $0.prefersDefaultDisabled)
     }
@@ -231,7 +238,9 @@ enum DDC {
     guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
     var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
     guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return [] }
-    return ids.filter { CGDisplayIsBuiltin($0) == 0 }.map {
+    // Skip hardware-mirror slaves. They are online but show another display's
+    // image, so dimming one is either a no-op or a surprise on the wrong panel.
+    return ids.filter { CGDisplayIsBuiltin($0) == 0 && CGDisplayMirrorsDisplay($0) == kCGNullDirectDisplay }.map {
       CGDisplayCandidate(id: $0, vendor: CGDisplayVendorNumber($0), model: CGDisplayModelNumber($0),
                          serial: CGDisplaySerialNumber($0), unit: CGDisplayUnitNumber($0), name: names[$0])
     }

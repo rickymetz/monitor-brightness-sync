@@ -350,11 +350,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
   /// Collect display names on the main thread and hand them to the controller.
   private func refreshDisplayNames() {
-    var names: [CGDirectDisplayID: String] = [:]
-    for screen in NSScreen.screens {
-      guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { continue }
-      names[CGDirectDisplayID(truncating: number)] = screen.localizedName
-    }
+    let names = NSScreen.displayNames()
     guard names != displayNames else { return }
     displayNames = names
     sync.setDisplayNames(names)
@@ -439,9 +435,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       }
     }
     guard newlySeen else { return }
+    // Persist the disable *before* the enrollment. A crash between the two then
+    // costs nothing: the display is simply unseen again next launch and gets its
+    // default a second time. The other order would record "seen" with no
+    // disable, permanently losing the default.
+    if disabledChanged { UserDefaults.standard.set(Array(disabledIDs), forKey: disabledKey) }
     UserDefaults.standard.set(Array(seenIDs), forKey: seenKey)
     guard disabledChanged else { return }
-    UserDefaults.standard.set(Array(disabledIDs), forKey: disabledKey)
     // This re-enters via onMonitors, but every display is in seenIDs by now, so
     // the next pass returns at the `guard newlySeen` above.
     sync.setDisabled(disabledIDs)
@@ -676,5 +676,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     statusItem.button?.attributedTitle = NSAttributedString(string: badge, attributes: [.font: font])
     statusItem.button?.setAccessibilityLabel("Monitor Brightness Sync — \(title)") // VoiceOver reads status, not the badge glyphs
     controlWindowController?.update(statusText: title, syncOn: isEnabled)
+  }
+}
+
+extension NSScreen {
+  /// Every screen's user-visible name, keyed by CoreGraphics display id.
+  /// `NSScreen` is main-thread-only, so the sync queue never calls this — the
+  /// names are collected here and handed over.
+  static func displayNames() -> [CGDirectDisplayID: String] {
+    var names: [CGDirectDisplayID: String] = [:]
+    for screen in NSScreen.screens {
+      guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { continue }
+      names[CGDirectDisplayID(truncating: number)] = screen.localizedName
+    }
+    return names
   }
 }

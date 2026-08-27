@@ -1,12 +1,6 @@
 import CoreGraphics
 import Foundation
 
-/// Apple's EDID vendor number. AirPlay targets and Sidecar iPads report it. They
-/// are real CoreGraphics displays with no DDC channel, so they look exactly like
-/// a DisplayLink monitor to the resolver — but dimming an Apple TV to match the
-/// laptop mid-session is not what anyone wants, so they enroll switched off.
-let kAppleVendorNumber: UInt32 = 0x610
-
 /// A CoreGraphics display reduced to plain values, so the claim cascade can be
 /// tested without hardware attached.
 struct CGDisplayCandidate: Equatable {
@@ -50,6 +44,13 @@ struct DisplayAssignment: Equatable {
 /// step 4 — is the part that matters: those displays are currently discarded
 /// rather than driven, which is why a DisplayLink monitor never syncs.
 enum DisplayResolver {
+  /// Apple's EDID vendor number. AirPlay targets and Sidecar iPads report it.
+  /// They are real CoreGraphics displays with no DDC channel, so they look
+  /// exactly like a DisplayLink monitor to the resolver — but dimming an Apple
+  /// TV to match the laptop mid-session is not what anyone wants, so they
+  /// enroll switched off.
+  static let appleVendorNumber: UInt32 = 0x610
+
   static func resolve(ddc: [DDCCandidate], cg: [CGDisplayCandidate]) -> DisplayAssignment {
     var pool = cg
     var assigned = [CGDirectDisplayID?](repeating: nil, count: ddc.count)
@@ -111,7 +112,7 @@ enum DisplayResolver {
       software.append(SoftwareDisplay(key: key,
                                       name: candidate.name ?? "External display",
                                       cgID: candidate.id,
-                                      prefersDefaultDisabled: candidate.vendor == kAppleVendorNumber))
+                                      prefersDefaultDisabled: candidate.vendor == Self.appleVendorNumber))
     }
     return DisplayAssignment(ddc: assigned, software: software)
   }

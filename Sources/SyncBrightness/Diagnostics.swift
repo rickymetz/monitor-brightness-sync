@@ -17,13 +17,7 @@ enum Diagnostics {
       out += "Built-in display: not found\n"
     }
 
-    var names: [CGDirectDisplayID: String] = [:]
-    for screen in NSScreen.screens {
-      guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { continue }
-      names[CGDirectDisplayID(truncating: number)] = screen.localizedName
-    }
-
-    let all = DDC.externalDisplays(names: names)
+    let all = DDC.externalDisplays(names: NSScreen.displayNames())
     let externals = all.filter { !$0.isSoftwareOnly }
     let software = all.filter { $0.isSoftwareOnly }
 
