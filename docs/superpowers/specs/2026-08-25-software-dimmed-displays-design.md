@@ -166,7 +166,7 @@ For a software-only display the gamma factor is the calibration curve's output:
 level = max(minGamma, display.curve.external(for: builtin))
 ```
 
-where `minGamma` is `minGammaFactor` (0.15).
+where `minGamma` is `GammaDimmer.minFactor` (0.15).
 
 **"Allow dimming all the way to black" does not apply to software-only displays** — the
 0.15 clamp holds for them regardless of the setting. On a DDC monitor that option means
@@ -235,7 +235,7 @@ Pure logic, unit-tested in the existing CLT-only harness (`run-tests.sh`):
 - **Enrollment filter** — Apple-vendor displays default to disabled, others to enabled;
   a display already in `seenDisplayIDs` is left at the user's choice rather than reset to
   the default.
-- **Blackout clamp** — a software-only display stays at or above `minGammaFactor` even
+- **Blackout clamp** — a software-only display stays at or above `GammaDimmer.minFactor` even
   with "allow dimming all the way to black" enabled.
 
 Hardware paths (gamma writes, DDC) cannot be unit-tested. `Diagnostics` (`SYNCBRIGHTNESS_DIAG=1`)
