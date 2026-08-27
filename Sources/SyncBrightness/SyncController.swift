@@ -76,7 +76,15 @@ final class SyncController {
     queue.async {
       self.subFloorDimming = on
       if !on {
-        for display in self.externals { self.gamma.set(display.cgDisplayID, factor: 1) }
+        // Sub-floor dimming is a DDC concept: hold DDC at its floor and dim
+        // further via gamma. A software-only display has no DDC leg, so its
+        // gamma factor *is* its brightness — resetting it here would flash the
+        // panel to full and leave the model reporting the old level, with
+        // nothing to heal it while sync is paused or in clamshell.
+        for display in self.externals where !display.isSoftwareOnly {
+          self.gamma.set(display.cgDisplayID, factor: 1)
+          display.clearGammaFollow()
+        }
       }
       self.lastAppliedFraction = -1
     }
