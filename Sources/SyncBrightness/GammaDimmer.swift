@@ -21,6 +21,19 @@ final class GammaDimmer {
     }
   }
 
+  /// Forget displays we no longer manage. Nothing to restore — they're gone —
+  /// but leaving them in the table means restoreToProfiles() keeps re-applying
+  /// their dimming, and macOS recycles display ids.
+  func prune(keeping ids: Set<CGDirectDisplayID>) {
+    factors = factors.filter { ids.contains($0.key) }
+  }
+
+  /// The factor currently applied to a display, if we're dimming it.
+  func factor(for id: CGDirectDisplayID?) -> Double? {
+    guard let id, let f = factors[id] else { return nil }
+    return Double(f)
+  }
+
   /// Remove all dimming and restore colour-profile gamma (call on quit).
   func reset() {
     factors.removeAll()

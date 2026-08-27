@@ -333,9 +333,20 @@ final class SyncController {
   private func rescanDisplays() {
     builtinID = BuiltinBrightness.builtinDisplayID()
     externals = DDC.externalDisplays(names: displayNames)
+    // The gamma table outlives this rescan; the ExternalDisplay objects do not.
+    // Drop displays we no longer manage (macOS recycles display ids, so a stale
+    // entry can re-dim a different panel) and keep the rest.
+    gamma.prune(keeping: Set(externals.compactMap(\.cgDisplayID)))
     for display in externals {
       display.refreshMaxBrightness()
       display.curve = profiles[display.id] ?? .default
+      // Carry over dimming we're already applying, so a rescan doesn't leave the
+      // panel dark while the UI reports full brightness. Without this a rescan
+      // with sync paused (or in clamshell) never heals: nothing re-applies, and
+      // the next brightness key computes its base from a bogus 1.0.
+      if let applied = gamma.factor(for: display.cgDisplayID), applied < 0.999 {
+        display.markGammaFollow(level: applied)
+      }
     }
     lastAppliedFraction = -1
     let count = externals.count
