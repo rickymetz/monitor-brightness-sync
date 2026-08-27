@@ -81,11 +81,37 @@ enum DisplayResolver {
     }
 
     // 4. Anything no DDC monitor claimed has no DDC channel.
-    let software = pool.map {
-      SoftwareDisplay(key: softwareKey(for: $0),
-                      name: $0.name ?? "External display",
-                      cgID: $0.id,
-                      prefersDefaultDisabled: $0.vendor == kAppleVendorNumber)
+    //
+    // The key is the display's identity everywhere else in the app (profiles,
+    // the disabled/seen sets, the per-monitor slider lookup), so it has to be
+    // unique within one scan. Two identical panels on one dock that report a
+    // real vendor and model but serial 0 would otherwise share a key, and
+    // toggling one would toggle both. Disambiguate the repeats with the
+    // CoreGraphics unit number.
+    //
+    // Residual, stated honestly: with serial 0 there is no stable
+    // disambiguator. Which twin keeps the short key and which gets the suffix
+    // can swap between sessions, and their calibration profiles swap with them.
+    // That is a cosmetic loss on a rare setup, not a stuck screen.
+    var usedKeys: Set<String> = []
+    var software: [SoftwareDisplay] = []
+    for candidate in pool {
+      // A single panel keeps its short, replug-stable key; a repeat takes the
+      // unit number as its disambiguator.
+      let base = softwareKey(for: candidate)
+      var key = usedKeys.contains(base) ? "\(base)-\(candidate.unit)" : base
+      // Belt and braces: unit numbers are not guaranteed distinct either.
+      let disambiguated = key
+      var attempt = 2
+      while usedKeys.contains(key) {
+        key = "\(disambiguated)-\(attempt)"
+        attempt += 1
+      }
+      usedKeys.insert(key)
+      software.append(SoftwareDisplay(key: key,
+                                      name: candidate.name ?? "External display",
+                                      cgID: candidate.id,
+                                      prefersDefaultDisabled: candidate.vendor == kAppleVendorNumber))
     }
     return DisplayAssignment(ddc: assigned, software: software)
   }
