@@ -92,6 +92,7 @@ final class SyncController {
         }
       }
       self.lastAppliedFraction = -1
+      self.reportMonitors()
     }
   }
 
