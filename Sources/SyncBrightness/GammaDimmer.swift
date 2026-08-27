@@ -34,11 +34,18 @@ final class GammaDimmer {
     }
   }
 
-  /// Forget displays we no longer manage. Nothing to restore — they're gone —
-  /// but leaving them in the table means restoreToProfiles() keeps re-applying
-  /// their dimming, and macOS recycles display ids.
+  /// Forget displays we no longer manage. Leaving a dimmed one in the table
+  /// means restoreToProfiles() keeps re-applying its dimming, and macOS
+  /// recycles display ids — so any dropped entry that was still dimmed must
+  /// be un-dimmed here, before it's forgotten. Once it's out of the table,
+  /// set() sees wasDimmed == false and would never restore it again, so the
+  /// panel would stay dimmed until the app quits.
   func prune(keeping ids: Set<CGDirectDisplayID>) {
+    let droppedDimmed = factors.contains { !ids.contains($0.key) && $0.value < 0.999 }
     factors = factors.filter { ids.contains($0.key) }
+    // Un-dim what we just stopped tracking: once it's out of the table, set()
+    // sees wasDimmed == false and would never restore it again.
+    if droppedDimmed { restoreToProfiles() }
   }
 
   /// The factor currently applied to a display, if we're dimming it.
