@@ -8,6 +8,7 @@
 // that undoes the dimming is on that screen. It applies to displays with no DDC
 // channel at all AND to DDC displays whose writes are refused — in both cases
 // there is no backlight answering us, so "allow blackout" must not reach here.
+import CoreGraphics
 import Foundation
 
 var failures = 0
@@ -43,7 +44,7 @@ do {
 //    from that output must still stay visible — and "allow blackout" cannot
 //    change that, because the clamp takes no such parameter to begin with.
 do {
-  let curveOutputAtLowBuiltin = 0.0 // BrightnessCurve.default.external(for: 0.15)
+  let curveOutputAtLowBuiltin = BrightnessCurve.default.external(for: 0.15)
   let factor = GammaDimmer.clampedFactor(for: curveOutputAtLowBuiltin)
   check(factor >= GammaDimmer.minFactor, "a curve output of 0 still leaves a readable screen")
   check(factor > 0, "no path through the clamp reaches black")
@@ -60,6 +61,28 @@ do {
     previous = factor
   }
   check(monotonic, "the clamp is monotonic and never dips below the floor")
+}
+
+// 5. factor(for:) reports what was set, and nil for anything untracked.
+//    These ids don't correspond to real displays; CGSetDisplayTransferByFormula
+//    on a bogus id is a harmless no-op, so it's safe to exercise set() here.
+do {
+  let dimmer = GammaDimmer()
+  let keptID: CGDirectDisplayID = 999_001
+  let droppedID: CGDirectDisplayID = 999_002
+  let untrackedID: CGDirectDisplayID = 999_003
+
+  dimmer.set(keptID, factor: 0.5)
+  dimmer.set(droppedID, factor: 0.3)
+
+  check(dimmer.factor(for: keptID) == 0.5, "factor(for:) reports what was set")
+  check(dimmer.factor(for: untrackedID) == nil, "factor(for:) is nil for an untracked id")
+  check(dimmer.factor(for: nil) == nil, "factor(for:) is nil for a nil id")
+
+  // 6. prune(keeping:) keeps live ids and drops the rest.
+  dimmer.prune(keeping: [keptID])
+  check(dimmer.factor(for: keptID) == 0.5, "prune keeps the id we told it to")
+  check(dimmer.factor(for: droppedID) == nil, "prune drops ids we didn't tell it to keep")
 }
 
 print(failures == 0 ? "\nAll GammaDimmer clamp checks passed" : "\n\(failures) check(s) failed")

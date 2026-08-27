@@ -26,6 +26,7 @@ run_check resolver-checks \
 
 run_check gamma-checks \
   -framework CoreGraphics \
+  Sources/SyncBrightness/BrightnessCurve.swift \
   Sources/SyncBrightness/GammaDimmer.swift \
   Tests/GammaChecks/main.swift
 
