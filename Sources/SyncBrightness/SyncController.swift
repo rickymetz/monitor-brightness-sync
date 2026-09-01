@@ -293,11 +293,13 @@ final class SyncController {
   }
 
   /// Dim a display via the gamma table and record that it's following in
-  /// software. The clamp is unconditional here: a display we can only reach
-  /// through gamma has no backlight to fall back on, so a zero factor would
-  /// leave a screen too dark to read the control that undoes it.
+  /// software. A display we can only reach through gamma has no backlight to fall
+  /// back on, so by default the level is held at a visible floor — a fully dark
+  /// screen is also the one showing the control that would undo it. "Allow
+  /// dimming all the way to black" is the user overriding that on purpose, and
+  /// the brightness keys still bring it back up.
   private func followViaGamma(_ display: ExternalDisplay, level: Double) {
-    let clamped = GammaDimmer.clampedFactor(for: level)
+    let clamped = GammaDimmer.clampedFactor(for: level, floor: allowBlackout ? 0 : GammaDimmer.minFactor)
     gamma.set(display.cgDisplayID, factor: clamped)
     display.markGammaFollow(level: clamped)
   }
@@ -310,9 +312,8 @@ final class SyncController {
   private func setLevel(_ display: ExternalDisplay, ddcFraction: Double, dimInput: Double, floor: Double, ramp: Bool = false) {
     if display.isSoftwareOnly {
       // No DDC channel: the curve's output *is* the luminance scale, and gamma
-      // is the only lever. The blackout clamp is kept even when "allow blackout"
-      // is on — there is no backlight to fall back on here, so a zero factor
-      // leaves a screen too dark to read the checkbox that would undo it.
+      // is the only lever. Held at a visible floor unless the user has opted into
+      // dimming all the way to black.
       guard display.cgDisplayID != nil else { display.clearGammaFollow(); return }
       followViaGamma(display, level: ddcFraction)
       return

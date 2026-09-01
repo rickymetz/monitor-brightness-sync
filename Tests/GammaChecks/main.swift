@@ -7,7 +7,8 @@
 // reach through the gamma table must never go fully black, because the control
 // that undoes the dimming is on that screen. It applies to displays with no DDC
 // channel at all AND to DDC displays whose writes are refused — in both cases
-// there is no backlight answering us, so "allow blackout" must not reach here.
+// there is no backlight answering us, so the floor holds by default — and
+// "Allow dimming all the way to black" is the user lifting it on purpose.
 import CoreGraphics
 import Foundation
 
@@ -27,6 +28,10 @@ print("GammaDimmer clamp checks")
 // 1. The floor holds, whatever the requested level.
 do {
   check(GammaDimmer.clampedFactor(for: 0.0) == GammaDimmer.minFactor, "a zero level clamps to the floor")
+  check(GammaDimmer.clampedFactor(for: 0.0, floor: 0) == 0, "blackout lifts the floor: a zero level reaches black")
+  check(GammaDimmer.clampedFactor(for: 0.05, floor: 0) == 0.05, "blackout passes a level below the default floor through")
+  check(GammaDimmer.clampedFactor(for: -1.0, floor: 0) == 0, "blackout still refuses a negative level")
+  check(GammaDimmer.clampedFactor(for: 2.0, floor: 0) == 1.0, "blackout still saturates at 1")
   check(GammaDimmer.clampedFactor(for: -1.0) == GammaDimmer.minFactor, "a negative level clamps to the floor")
   check(GammaDimmer.clampedFactor(for: 0.01) == GammaDimmer.minFactor, "below the floor clamps to the floor")
   check(GammaDimmer.minFactor > 0, "the floor is not black")
@@ -47,6 +52,8 @@ do {
   let curveOutputAtLowBuiltin = BrightnessCurve.default.external(for: 0.15)
   let factor = GammaDimmer.clampedFactor(for: curveOutputAtLowBuiltin)
   check(factor >= GammaDimmer.minFactor, "a curve output of 0 still leaves a readable screen")
+  check(GammaDimmer.clampedFactor(for: curveOutputAtLowBuiltin, floor: 0) == 0,
+        "with blackout on, the same curve output reaches black")
   check(factor > 0, "no path through the clamp reaches black")
 }
 

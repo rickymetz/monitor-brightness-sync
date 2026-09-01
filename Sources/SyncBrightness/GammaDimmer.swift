@@ -11,12 +11,12 @@ final class GammaDimmer {
   static let minFactor = 0.15
 
   /// The gamma factor to use for a wanted luminance `level`, held at or above
-  /// the visible floor. Every caller that has no working backlight to fall back
-  /// on goes through here, whether the display has no DDC channel at all or its
-  /// DDC writes were refused. "Allow blackout" does not reach this: blackout is
-  /// safe only where the backlight still answers, which is not these cases.
-  static func clampedFactor(for level: Double) -> Double {
-    max(minFactor, min(1.0, level))
+  /// `floor`. Every caller with no working backlight to fall back on goes through
+  /// here — a display with no DDC channel at all, or one whose DDC writes were
+  /// refused. `floor` defaults to the visible minimum; "Allow dimming all the way
+  /// to black" passes 0 to let the display reach true black.
+  static func clampedFactor(for level: Double, floor: Double = minFactor) -> Double {
+    max(max(0.0, floor), min(1.0, level))
   }
 
   /// `factor` is a 0...1 luminance multiplier (1 = no dimming).

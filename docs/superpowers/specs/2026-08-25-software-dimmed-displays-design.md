@@ -168,13 +168,17 @@ level = max(minGamma, display.curve.external(for: builtin))
 
 where `minGamma` is `GammaDimmer.minFactor` (0.15).
 
-**"Allow dimming all the way to black" does not apply to software-only displays** — the
-0.15 clamp holds for them regardless of the setting. On a DDC monitor that option means
-"hold DDC at minimum and let gamma take it the rest of the way", and the backlight is
-still under hardware control. On a gamma-only display there is no backlight to fall back
-on, so removing the clamp yields a fully black screen that cannot be read well enough to
-un-black itself — recoverable only from another display. The clamp is retained as a safety
-floor.
+**"Allow dimming all the way to black" applies to software-only displays too.**
+Superseded 2026-09-01: the original design held the 0.15 floor unconditionally for these
+displays, reasoning that a fully black gamma-only screen is also the screen showing the
+control that would undo it. In practice that made the setting a no-op on exactly the
+displays a user most wants it for, and the reasoning overweighted the risk — the dimming
+is user-initiated and the brightness keys raise it again. The floor is now the default,
+and the setting lifts it to 0.
+
+Where black lands is a property of the calibration curve, not the clamp: the display goes
+fully dark at whatever built-in level the curve maps to 0, which for `BrightnessCurve.default`
+is `zeroBuiltin` (0.15) and below.
 
 **Behavior change to an existing path.** The refused-DDC-write branch
 (`SyncController.swift:262-269`) currently passes `dimInput` — the *raw* built-in level —
@@ -236,7 +240,7 @@ Pure logic, unit-tested in the existing CLT-only harness (`run-tests.sh`):
   a display already in `seenDisplayIDs` is left at the user's choice rather than reset to
   the default.
 - **Blackout clamp** — a software-only display stays at or above `GammaDimmer.minFactor` even
-  with "allow dimming all the way to black" enabled.
+  by default, and reaches 0 when "allow dimming all the way to black" is enabled.
 
 Hardware paths (gamma writes, DDC) cannot be unit-tested. `Diagnostics` (`SYNCBRIGHTNESS_DIAG=1`)
 is extended to list software-only displays alongside DDC ones, with their resolved
